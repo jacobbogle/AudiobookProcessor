@@ -1,0 +1,11 @@
+[tool.poetry]
+name = "audiobook-p"
+version = "0.0.0"
+description = "Scaffold package for audiobook processing"
+
+[tool.poetry.dependencies]
+python = ">=3.9"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

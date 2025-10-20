@@ -1,0 +1,42 @@
+{
+  "title": {
+    "value": "",
+    "tags": ["©nam", "TIT2"]
+  },
+  "artist": {
+    "value": "",
+    "tags": ["©ART", "TPE1"]
+  },
+  "album": {
+    "value": "",
+    "tags": ["©alb", "TALB"]
+  },
+  "album_sort": {
+    "value": null,
+    "tags": ["soal", "TSOA"]
+  },
+  "genre": {
+    "value": "",
+    "tags": ["©gen", "TCON"]
+  },
+  "sort_title": {
+    "value": "",
+    "tags": ["sonm", "TSOT"]
+  },
+  "chapter_sort": {
+    "value": null,
+    "tags": ["sonm", "TSOT"]
+  },
+  "track": {
+    "value": "",
+    "tags": ["trkn", "TRCK"]
+  },
+  "picture": {
+    "value": "",
+    "tags": ["covr", "APIC"]
+  },
+  "media_kind": {
+    "value": "",
+    "tags": ["stik", "TMED"]
+  }
+}
