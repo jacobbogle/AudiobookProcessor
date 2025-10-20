@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Wrapper script for audiobook-p CLI"""
+
+import sys
+import os
+
+# Add the audiobook-p directory to Python path
+audiobook_p_path = os.path.join(os.path.dirname(__file__), 'audiobook-p')
+if audiobook_p_path not in sys.path:
+    sys.path.insert(0, audiobook_p_path)
+
+# Import and run the CLI
+from audiobook_p.main import cli
+
+if __name__ == '__main__':
+    cli()
