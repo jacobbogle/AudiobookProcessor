@@ -36,8 +36,31 @@ except ImportError as e:
     novel_verify = None
     series_verify = None
     batch_verify = None
-    book_title_logic = lambda x: x  # No-op fallback
     remove_track_numbers = lambda x: x  # No-op fallback
+    
+    # Define book_title_logic locally
+    def book_title_logic(title):
+        """
+        Remove track numbers from chapter titles.
+        Examples:
+        - "01 Chapter Title" -> "Chapter Title"
+        - "1 Introduction" -> "Introduction" 
+        - "01 01 The Beginning" -> "01 The Beginning" (removes first number)
+        """
+        import re
+        
+        if not title:
+            return title
+            
+        # Pattern to match: number + whitespace + rest of title
+        # This handles: "01 Title", "1 Title", "01 01 Title", etc.
+        pattern = r'^\d+\s+(.+)$'
+        match = re.match(pattern, title)
+        
+        if match:
+            return match.group(1)
+        else:
+            return title
 
 
 def extract_metadata_from_file(file_path):
@@ -78,7 +101,7 @@ def extract_metadata_from_file(file_path):
             tags.append(mutagen_keys['id3'])
             
         # Handle special cases for cover art
-        if desc_key == 'picture':
+        if desc_key in ['picture', 'cover_art']:
             tags.extend(['covr', 'APIC:'])
         
         value = None
@@ -86,42 +109,65 @@ def extract_metadata_from_file(file_path):
         # Try each tag until we find a value
         for tag in tags:
             if hasattr(audio, 'tags') and audio.tags:
-                if tag in audio.tags:
-                    raw_value = audio.tags[tag]
-                    # Handle different types
-                    if isinstance(raw_value, list):
-                        if len(raw_value) > 0:
-                            item = raw_value[0]
-                            if isinstance(item, (str, int, float)):
-                                value = item
-                            elif hasattr(item, 'text'):
-                                # Handle ID3 frames and other objects with text attribute
-                                text_value = item.text
-                                if isinstance(text_value, list) and len(text_value) > 0:
-                                    value = text_value[0]
+                # For MP4 files, convert Unicode escape sequences to proper byte strings
+                keys_to_try = [tag]
+                try:
+                    # Handle escaped Unicode sequences like \\xa9nam -> \xa9nam
+                    if isinstance(tag, (str, type(u''))) and '\\x' in tag:
+                        decoded_unicode = tag.encode('ascii').decode('unicode_escape')
+                        # Convert Unicode to byte string for MP4 tags
+                        byte_key = decoded_unicode.encode('latin-1')
+                        keys_to_try.append(byte_key)
+                except (UnicodeError, AttributeError):
+                    pass
+                
+                for key_to_try in keys_to_try:
+                    if key_to_try in audio.tags:
+                        raw_value = audio.tags[key_to_try]
+                        # Handle different types
+                        if isinstance(raw_value, list):
+                            if len(raw_value) > 0:
+                                item = raw_value[0]
+                                # Check for string types including Unicode in Python 2
+                                if isinstance(item, (str, int, float)):
+                                    value = item
+                                elif hasattr(item, '__unicode__') or hasattr(item, 'encode'):
+                                    # Handle Unicode strings in Python 2
+                                    value = item
+                                elif hasattr(item, 'text'):
+                                    # Handle ID3 frames and other objects with text attribute
+                                    text_value = item.text
+                                    if isinstance(text_value, list) and len(text_value) > 0:
+                                        value = text_value[0]
+                                    else:
+                                        value = text_value
                                 else:
-                                    value = text_value
+                                    # Handle binary objects like cover art - mark as present
+                                    if desc_key in ['picture', 'cover_art']:
+                                        value = 'Present'
+                                    else:
+                                        continue
+                        elif isinstance(raw_value, (str, int, float)):
+                            value = raw_value
+                        elif hasattr(raw_value, '__unicode__') or hasattr(raw_value, 'encode'):
+                            # Handle Unicode strings in Python 2
+                            value = raw_value
+                        elif hasattr(raw_value, 'text'):
+                            # Handle ID3 frames directly
+                            text_value = raw_value.text
+                            if isinstance(text_value, list) and len(text_value) > 0:
+                                value = text_value[0]
                             else:
-                                # Handle binary objects like cover art - mark as present
-                                if desc_key == 'picture':
-                                    value = 'Present'
-                                else:
-                                    continue
-                    elif isinstance(raw_value, (str, int, float)):
-                        value = raw_value
-                    elif hasattr(raw_value, 'text'):
-                        # Handle ID3 frames directly
-                        text_value = raw_value.text
-                        if isinstance(text_value, list) and len(text_value) > 0:
-                            value = text_value[0]
+                                value = text_value
                         else:
-                            value = text_value
-                    else:
-                        # Handle binary objects like cover art - mark as present
-                        if desc_key == 'picture':
-                            value = 'Present'
-                        else:
-                            continue
+                            # Handle binary objects like cover art - mark as present
+                            if desc_key in ['picture', 'cover_art']:
+                                value = 'Present'
+                            else:
+                                continue
+                        break
+                
+                if value is not None:
                     break
             # For some formats, tags might be direct attributes
             elif hasattr(audio, tag):
@@ -152,7 +198,16 @@ def extract_metadata_from_file(file_path):
         if value is None:
             value = ''
 
-        extracted[desc_key] = value
+        # Additional handling for MP4Cover objects and other binary data
+        try:
+            from mutagen.mp4 import MP4Cover
+            if isinstance(value, MP4Cover):
+                extracted[desc_key] = 'Present'
+            else:
+                extracted[desc_key] = value
+        except ImportError:
+            # If mutagen.mp4 is not available, just use the value
+            extracted[desc_key] = value
 
     return extracted
 
@@ -217,10 +272,16 @@ def copy_folder(source_path, max_attempts=5):
             temp_path = temp_dir
 
             # Copy the entire folder
-            shutil.copytree(source_path, os.path.join(temp_path, os.path.basename(source_path)), dirs_exist_ok=True)
+            dest_path = os.path.join(temp_path, os.path.basename(source_path))
+            try:
+                # Try Python 3 version first
+                shutil.copytree(source_path, dest_path, dirs_exist_ok=True)
+            except TypeError:
+                # Python 2.7 doesn't have dirs_exist_ok parameter
+                shutil.copytree(source_path, dest_path)
 
             # Return the path to the copied folder
-            return str(os.path.join(temp_path, os.path.basename(source_path)))
+            return str(dest_path)
 
         except Exception as e:
             # Clean up failed temp directory if it was created
@@ -464,11 +525,11 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None):
 
     # Clean up the folder name in temp directory
     cleaned_temp_folder_name = book_title_logic(os.path.basename(temp_path))
-    new_temp_path = os.path.dirname(temp_path) / cleaned_temp_folder_name
+    new_temp_path = os.path.join(os.path.dirname(temp_path), cleaned_temp_folder_name)
 
     # Rename the folder if name changed
     if cleaned_temp_folder_name != os.path.basename(temp_path):
-        temp_path.rename(new_temp_path)
+        os.rename(temp_path, new_temp_path)
         temp_folder = str(new_temp_path)
 
     return temp_folder
@@ -541,15 +602,18 @@ def convert_folder_to_m4b(folder_path, output_path, config=None):
             try:
                 source_metadata = extract_metadata_from_file(audio_file)
                 if source_metadata.get('title'):
-                    chapter_title = source_metadata['title']
+                    # Apply book title logic to clean up chapter titles
+                    chapter_title = book_title_logic(source_metadata['title'])
                 else:
                     # Use filename without extension as fallback
                     file_stem = os.path.splitext(os.path.basename(audio_file))[0]
-                    chapter_title = file_stem
+                    # Apply book title logic to clean up filename-based titles too
+                    chapter_title = book_title_logic(file_stem)
             except:
                 # Use filename without extension as final fallback
                 file_stem = os.path.splitext(os.path.basename(audio_file))[0]
-                chapter_title = file_stem
+                # Apply book title logic to clean up filename-based titles
+                chapter_title = book_title_logic(file_stem)
 
             # Write chapter info to metadata file
             f.write("\n[CHAPTER]\n")
@@ -651,10 +715,10 @@ def add_audiobook_metadata(m4b_path, source_files):
                     # Check for picture data directly
                     test_audio = MutagenFile(source_file)
                     if test_audio and hasattr(test_audio, 'tags') and test_audio.tags:
-                        # Check for any tag containing 'APIC' or 'PIC'
+                        # Check for any tag containing 'APIC' or 'PIC' (MP3) or 'covr' (M4A)
                         has_picture = False
                         for tag_name in test_audio.tags:
-                            if 'APIC' in tag_name or 'PIC' in tag_name:
+                            if 'APIC' in tag_name or 'PIC' in tag_name or tag_name == 'covr':
                                 has_picture = True
                                 break
                         if has_picture:
@@ -699,21 +763,41 @@ def add_audiobook_metadata(m4b_path, source_files):
                 source_audio = MutagenFile(source_with_picture)
                 if source_audio and hasattr(source_audio, 'tags') and source_audio.tags:
                     # Look for picture data in the source file
-                    for tag_name in source_audio.tags:
-                        if 'APIC' in tag_name or 'PIC' in tag_name:
-                            picture_data = source_audio.tags[tag_name]
-                            # Convert to MP4 format - MP4 uses 'covr' tag
-                            if isinstance(picture_data, list) and len(picture_data) > 0:
-                                pic = picture_data[0]
-                                # Extract the image data
-                                if hasattr(pic, 'data'):
-                                    # Store as MP4 cover art
-                                    audio.tags['covr'] = [pic.data]
+                    picture_copied = False
+                    
+                    # First check for M4A cover art (covr tag)
+                    if 'covr' in source_audio.tags and not picture_copied:
+                        covr_data = source_audio.tags['covr']
+                        if isinstance(covr_data, list) and len(covr_data) > 0:
+                            # M4A files already have MP4Cover objects, copy directly
+                            audio.tags['covr'] = covr_data
+                            picture_copied = True
+                            print("Cover art copied from M4A source")
+                    
+                    # If no M4A cover found, check for MP3-style APIC tags
+                    if not picture_copied:
+                        for tag_name in source_audio.tags:
+                            if 'APIC' in tag_name or 'PIC' in tag_name:
+                                picture_data = source_audio.tags[tag_name]
+                                # Convert to MP4 format - MP4 uses 'covr' tag
+                                if isinstance(picture_data, list) and len(picture_data) > 0:
+                                    pic = picture_data[0]
+                                    # Extract the image data
+                                    if hasattr(pic, 'data'):
+                                        # Store as MP4 cover art
+                                        audio.tags['covr'] = [pic.data]
+                                        picture_copied = True
+                                        print("Cover art copied from MP3 source")
+                                        break
+                                elif hasattr(picture_data, 'data'):
+                                    # Single picture object
+                                    audio.tags['covr'] = [picture_data.data]
+                                    picture_copied = True
+                                    print("Cover art copied from MP3 source")
                                     break
-                            elif hasattr(picture_data, 'data'):
-                                # Single picture object
-                                audio.tags['covr'] = [picture_data.data]
-                                break
+                    
+                    if not picture_copied:
+                        print("Warning: No cover art found in source file")
 
         except Exception as e:
             print("Warning: Failed to copy metadata to M4B: {}".format(e))
@@ -931,7 +1015,7 @@ def cmd_extract(args):
     try:
         if os.path.isfile(source_path):
             # Process single file
-            if os.path.splitext(source_path)[1].lower() not in ['.m4a', '.mp3']:
+            if os.path.splitext(source_path)[1].lower() not in ['.m4a', '.mp3', '.m4b']:
                 print("File is not an audio file: {}".format(source_path))
                 return
 
@@ -940,14 +1024,18 @@ def cmd_extract(args):
             serializable_metadata = {}
             for key, value in metadata.items():
                 try:
-                    # Try to encode as UTF-8 string
-                    if hasattr(value, 'encode'):
-                        serializable_metadata[key] = value.encode('utf-8')
-                    else:
+                    # Convert to string while preserving Unicode characters
+                    if isinstance(value, str):
+                        serializable_metadata[key] = value
+                    elif isinstance(value, (int, float, bool)):
+                        serializable_metadata[key] = value
+                    elif hasattr(value, '__str__'):
                         serializable_metadata[key] = str(value)
-                except:
+                    else:
+                        serializable_metadata[key] = repr(value)
+                except Exception as e:
                     # Fallback to string representation
-                    serializable_metadata[key] = repr(value)
+                    serializable_metadata[key] = "Error converting value: {}".format(str(e))
             result = {
                 "file": str(source_path),
                 "metadata": serializable_metadata
@@ -1202,6 +1290,91 @@ def cmd_config(args):
         print("Configuration management not available")
 
 
+def cmd_mutate_convert(args):
+    """Mutate metadata, create temporary files, then convert to M4B and send to destination"""
+    import tempfile
+    import shutil
+    
+    source_path = args.source
+    destination_path = args.destination
+    
+    # Create a temporary directory for the mutated files
+    temp_dir = tempfile.mkdtemp(prefix="mutate_convert_")
+    
+    try:
+        print("Starting mutate-convert operation...")
+        print("Source: {}".format(source_path))
+        print("Destination: {}".format(destination_path))
+        print("Temporary directory: {}".format(temp_dir))
+        
+        if os.path.isfile(source_path):
+            print("Mutate-convert operation requires a folder. Use extract for single files.")
+            return
+
+        elif os.path.isdir(source_path):
+            # Step 1: Mutate the source files to temporary directory
+            print("\nStep 1: Mutating metadata and copying files...")
+            
+            # Check if this folder has individual audio files
+            audio_extensions = ['*.m4a', '*.mp3']
+            has_individual_files = False
+            for ext in audio_extensions:
+                if list(glob.glob(os.path.join(source_path, ext))):
+                    has_individual_files = True
+                    break
+
+            # Check if this folder has subfolders
+            has_subfolders = any(os.path.isdir(os.path.join(source_path, child)) for child in os.listdir(source_path) if os.path.isdir(os.path.join(source_path, child)))
+
+            if has_individual_files and not has_subfolders:
+                # Simple novel folder
+                # Extract metadata first, then mutate
+                metadata_dict = extract_metadata_from_folder(str(source_path), "novel")
+                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix)
+                temp_mutated_path = move_to_destination(mutated_path, temp_dir, "novel")
+                
+                print("Mutated files created in: {}".format(temp_mutated_path))
+                
+                # Step 2: Convert the mutated files to M4B
+                print("\nStep 2: Converting mutated files to M4B...")
+                
+                # Create a mock args object for cmd_convert
+                class MockArgs:
+                    def __init__(self, source, output):
+                        self.source = source
+                        self.output = output
+                
+                convert_args = MockArgs(temp_mutated_path, destination_path)
+                cmd_convert(convert_args)
+                
+                print("\nMutate-convert operation completed successfully!")
+                print("Final M4B file location: {}".format(destination_path))
+                
+            elif has_subfolders:
+                print("Multi-folder processing not yet supported for mutate-convert")
+                return
+            else:
+                print("No audio files found in source folder")
+                return
+        else:
+            print("Source path does not exist: {}".format(source_path))
+            return
+    
+    except Exception as e:
+        print("Error during mutate-convert operation: {}".format(e))
+        import traceback
+        traceback.print_exc()
+    
+    finally:
+        # Clean up temporary directory
+        try:
+            print("\nCleaning up temporary files...")
+            shutil.rmtree(temp_dir)
+            print("Temporary directory removed: {}".format(temp_dir))
+        except Exception as e:
+            print("Warning: Could not remove temporary directory {}: {}".format(temp_dir, e))
+
+
 def cmd_info(args):
     print('audiobook-p v1.0.0')
     
@@ -1247,6 +1420,14 @@ def cli(argv=None):
     convert_parser.add_argument('source', help='Path to folder containing audio files')
     convert_parser.add_argument('output', help='Output directory or M4B file path')
     convert_parser.set_defaults(func=cmd_convert)
+
+    # Mutate-Convert command
+    mutate_convert_parser = subparsers.add_parser('mutate-convert', help='Mutate metadata then convert to M4B in one operation')
+    mutate_convert_parser.add_argument('source', help='Path to audio folder')
+    mutate_convert_parser.add_argument('destination', help='Destination path for final M4B file')
+    mutate_convert_parser.add_argument('--album-sort-prefix', help='String to prefix album_sort with " : " separator')
+    mutate_convert_parser.add_argument('--album-suffix', help='String to suffix album with " - " separator')
+    mutate_convert_parser.set_defaults(func=cmd_mutate_convert)
 
     # Config command
     config_parser = subparsers.add_parser('config', help='Manage configuration settings')

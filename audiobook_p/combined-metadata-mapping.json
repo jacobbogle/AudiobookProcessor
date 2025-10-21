@@ -76,7 +76,7 @@
         "id3": "text_string_with_encoding"
       },
       "mutagen_keys": {
-        "mp4": "\\xa9wrt", 
+        "mp4": "\\xa9wrt",
         "id3": "TCOM"
       }
     },
