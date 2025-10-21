@@ -1,42 +1,433 @@
 {
-  "title": {
-    "value": "",
-    "tags": ["©nam", "TIT2"]
+  "format_info": {
+    "description": "Combined metadata mapping for audiobook formats: MP3 (ID3v2), M4A (MP4/iTunes), M4B (MP4/iTunes)",
+    "reference_sources": [
+      "https://id3.org/id3v2.3.0",
+      "https://id3.org/id3v2.4.0-frames", 
+      "https://mutagen.readthedocs.io/en/latest/api/mp4.html",
+      "https://picard.musicbrainz.org/docs/mappings/"
+    ],
+    "last_updated": "2025-10-20"
   },
-  "artist": {
-    "value": "",
-    "tags": ["©ART", "TPE1"]
+  "core_metadata": {
+    "title": {
+      "description": "Individual track/chapter title",
+      "audiobook_usage": "Chapter title or track name",
+      "mp4_atom": "©nam",
+      "id3_frame": "TIT2",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9nam",
+        "id3": "TIT2"
+      }
+    },
+    "album": {
+      "description": "Album/Book title",
+      "audiobook_usage": "Full audiobook title",
+      "mp4_atom": "©alb", 
+      "id3_frame": "TALB",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9alb",
+        "id3": "TALB"
+      }
+    },
+    "artist": {
+      "description": "Primary performer/narrator",
+      "audiobook_usage": "Narrator name",
+      "mp4_atom": "©ART",
+      "id3_frame": "TPE1", 
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9ART",
+        "id3": "TPE1"
+      }
+    },
+    "album_artist": {
+      "description": "Album artist (author for audiobooks)",
+      "audiobook_usage": "Author name",
+      "mp4_atom": "aART",
+      "id3_frame": "TPE2",
+      "data_types": {
+        "mp4": "utf8_text", 
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "aART",
+        "id3": "TPE2"
+      }
+    },
+    "composer": {
+      "description": "Composer/Writer (author for audiobooks)",
+      "audiobook_usage": "Author name (alternative)",
+      "mp4_atom": "©wrt",
+      "id3_frame": "TCOM",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9wrt", 
+        "id3": "TCOM"
+      }
+    },
+    "date": {
+      "description": "Release/Publication date",
+      "audiobook_usage": "Publication year or date",
+      "mp4_atom": "©day",
+      "id3_frame": "TYER/TDRC",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "numeric_string_or_timestamp"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9day",
+        "id3": "TYER"
+      }
+    },
+    "genre": {
+      "description": "Content genre",
+      "audiobook_usage": "Genre (e.g., 'Audiobook', 'Fiction')",
+      "mp4_atom": "©gen",
+      "id3_frame": "TCON",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9gen",
+        "id3": "TCON"
+      }
+    },
+    "track_number": {
+      "description": "Track/Chapter number and total",
+      "audiobook_usage": "Chapter number (e.g., (1, 12) for chapter 1 of 12)",
+      "mp4_atom": "trkn",
+      "id3_frame": "TRCK",
+      "data_types": {
+        "mp4": "tuple_of_ints",
+        "id3": "numeric_string"
+      },
+      "mutagen_keys": {
+        "mp4": "trkn",
+        "id3": "TRCK"
+      }
+    },
+    "disc_number": {
+      "description": "Disc number and total discs",
+      "audiobook_usage": "Disc number for multi-disc audiobooks",
+      "mp4_atom": "disk",
+      "id3_frame": "TPOS",
+      "data_types": {
+        "mp4": "tuple_of_ints",
+        "id3": "numeric_string"
+      },
+      "mutagen_keys": {
+        "mp4": "disk",
+        "id3": "TPOS"
+      }
+    },
+    "cover_art": {
+      "description": "Embedded cover artwork",
+      "audiobook_usage": "Book cover image",
+      "mp4_atom": "covr",
+      "id3_frame": "APIC",
+      "data_types": {
+        "mp4": "list_of_mp4cover",
+        "id3": "apic_structure"
+      },
+      "mutagen_keys": {
+        "mp4": "covr",
+        "id3": "APIC"
+      }
+    },
+    "comment": {
+      "description": "General comment or description",
+      "audiobook_usage": "Book description or summary",
+      "mp4_atom": "©cmt",
+      "id3_frame": "COMM",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "comment_structure"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9cmt",
+        "id3": "COMM"
+      }
+    }
   },
-  "album": {
-    "value": "",
-    "tags": ["©alb", "TALB"]
+  "audiobook_specific": {
+    "media_kind": {
+      "description": "Media type identifier (critical for iTunes audiobook recognition)",
+      "audiobook_usage": "Must be set to 2 for audiobooks in iTunes/Music app",
+      "mp4_atom": "stik",
+      "id3_frame": "none",
+      "data_types": {
+        "mp4": "integer",
+        "id3": "not_supported"
+      },
+      "mutagen_keys": {
+        "mp4": "stik",
+        "id3": "none"
+      },
+      "values": {
+        "0": "Movie",
+        "1": "Music",
+        "2": "Audiobook",
+        "6": "Music Video",
+        "9": "Short Film",
+        "10": "TV Show"
+      }
+    },
+    "gapless_playback": {
+      "description": "Indicates gapless album for seamless chapter transitions",
+      "audiobook_usage": "Should be set to 1/True for audiobooks",
+      "mp4_atom": "pgap",
+      "id3_frame": "none",
+      "data_types": {
+        "mp4": "boolean",
+        "id3": "not_supported"
+      },
+      "mutagen_keys": {
+        "mp4": "pgap",
+        "id3": "none"
+      }
+    },
+    "content_rating": {
+      "description": "Content advisory rating",
+      "audiobook_usage": "Content rating (0=None, 1=Explicit, 2=Clean)",
+      "mp4_atom": "rtng",
+      "id3_frame": "none",
+      "data_types": {
+        "mp4": "integer",
+        "id3": "not_supported"
+      },
+      "mutagen_keys": {
+        "mp4": "rtng",
+        "id3": "none"
+      },
+      "values": {
+        "0": "None",
+        "1": "Explicit", 
+        "2": "Clean"
+      }
+    },
+    "encoded_by": {
+      "description": "Encoding tool or person",
+      "audiobook_usage": "Software used to create the audiobook",
+      "mp4_atom": "©too",
+      "id3_frame": "TENC",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9too",
+        "id3": "TENC"
+      }
+    }
   },
-  "album_sort": {
-    "value": null,
-    "tags": ["soal", "TSOA"]
+  "sort_fields": {
+    "album_sort": {
+      "description": "Sort name for album",
+      "audiobook_usage": "Sort name for book title (e.g., 'Hobbit, The')",
+      "mp4_atom": "soal",
+      "id3_frame": "TSOA",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "soal",
+        "id3": "TSOA"
+      }
+    },
+    "artist_sort": {
+      "description": "Sort name for artist",
+      "audiobook_usage": "Sort name for narrator",
+      "mp4_atom": "soar",
+      "id3_frame": "TSOP",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "soar",
+        "id3": "TSOP"
+      }
+    },
+    "album_artist_sort": {
+      "description": "Sort name for album artist",
+      "audiobook_usage": "Sort name for author (e.g., 'Tolkien, J.R.R.')",
+      "mp4_atom": "soaa",
+      "id3_frame": "TSO2",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "soaa",
+        "id3": "TSO2"
+      }
+    },
+    "title_sort": {
+      "description": "Sort name for title",
+      "audiobook_usage": "Sort name for chapter title",
+      "mp4_atom": "sonm",
+      "id3_frame": "TSOT",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "sonm",
+        "id3": "TSOT"
+      }
+    }
   },
-  "genre": {
-    "value": "",
-    "tags": ["©gen", "TCON"]
+  "extended_metadata": {
+    "grouping": {
+      "description": "Content grouping (series name)",
+      "audiobook_usage": "Book series name",
+      "mp4_atom": "©grp",
+      "id3_frame": "TIT1",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9grp",
+        "id3": "TIT1"
+      }
+    },
+    "subtitle": {
+      "description": "Subtitle or description refinement",
+      "audiobook_usage": "Book subtitle or chapter description",
+      "mp4_atom": "desc",
+      "id3_frame": "TIT3",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "desc",
+        "id3": "TIT3"
+      }
+    },
+    "publisher": {
+      "description": "Publisher information",
+      "audiobook_usage": "Publishing house or audiobook publisher",
+      "mp4_atom": "©pub",
+      "id3_frame": "TPUB",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9pub",
+        "id3": "TPUB"
+      }
+    },
+    "copyright": {
+      "description": "Copyright information",
+      "audiobook_usage": "Copyright notice for the book",
+      "mp4_atom": "cprt",
+      "id3_frame": "TCOP",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "cprt",
+        "id3": "TCOP"
+      }
+    },
+    "language": {
+      "description": "Language of content",
+      "audiobook_usage": "Language of audiobook narration",
+      "mp4_atom": "----:com.apple.iTunes:LANGUAGE",
+      "id3_frame": "TLAN",
+      "data_types": {
+        "mp4": "freeform_text",
+        "id3": "language_code"
+      },
+      "mutagen_keys": {
+        "mp4": "----:com.apple.iTunes:LANGUAGE",
+        "id3": "TLAN"
+      }
+    },
+    "lyrics": {
+      "description": "Lyrics or text content",
+      "audiobook_usage": "Chapter text or book excerpt",
+      "mp4_atom": "©lyr",
+      "id3_frame": "USLT",
+      "data_types": {
+        "mp4": "utf8_text",
+        "id3": "unsync_lyrics_structure"
+      },
+      "mutagen_keys": {
+        "mp4": "\\xa9lyr",
+        "id3": "USLT"
+      }
+    }
   },
-  "sort_title": {
-    "value": "",
-    "tags": ["sonm", "TSOT"]
+  "format_specific_notes": {
+    "mp4_m4a_m4b": {
+      "critical_for_audiobooks": [
+        "stik=2 (Media Kind: Audiobook)",
+        "pgap=1 (Gapless Playback)", 
+        "aART (Album Artist for author)",
+        "©alb (Album for book title)"
+      ],
+      "encoding": "UTF-8 text, no encoding byte prefix",
+      "integers": "Native integer support for stik, rtng, etc.",
+      "cover_art": "MP4Cover objects with format specification",
+      "freeform_tags": "----:com.apple.iTunes:KEY_NAME format supported"
+    },
+    "mp3_id3v2": {
+      "encoding": "Requires text encoding byte (00=ISO-8859-1, 01=UTF-16)",
+      "no_audiobook_type": "No equivalent to stik atom",
+      "text_based": "All data stored as text strings",
+      "cover_art": "APIC frames with mime type and picture type",
+      "version_differences": "ID3v2.3 vs ID3v2.4 frame differences (TYER vs TDRC)"
+    }
   },
-  "chapter_sort": {
-    "value": null,
-    "tags": ["sonm", "TSOT"]
-  },
-  "track": {
-    "value": "",
-    "tags": ["trkn", "TRCK"]
-  },
-  "picture": {
-    "value": "",
-    "tags": ["covr", "APIC"]
-  },
-  "media_kind": {
-    "value": "",
-    "tags": ["stik", "TMED"]
+  "legacy_compatibility": {
+    "title": {
+      "tags": ["©nam", "TIT2"]
+    },
+    "artist": {
+      "tags": ["©ART", "TPE1"]
+    },
+    "album": {
+      "tags": ["©alb", "TALB"]
+    },
+    "album_sort": {
+      "tags": ["soal", "TSOA"]
+    },
+    "genre": {
+      "tags": ["©gen", "TCON"]
+    },
+    "sort_title": {
+      "tags": ["sonm", "TSOT"]
+    },
+    "track": {
+      "tags": ["trkn", "TRCK"]
+    },
+    "picture": {
+      "tags": ["covr", "APIC"]
+    },
+    "media_kind": {
+      "tags": ["stik", "TMED"]
+    }
   }
 }

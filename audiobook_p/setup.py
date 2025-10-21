@@ -1,16 +1,20 @@
 from setuptools import setup, find_packages
 
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+try:
+    with open("README.md", "r", encoding="utf-8") as fh:
+        long_description = fh.read()
+except FileNotFoundError:
+    long_description = "Audiobook processing utility"
 
 setup(
     name="audiobook-p",
-    version="0.0.0",
-    author="Your Name",
+    version="1.0.0",
+    author="bogle",
     description="Audiobook processing utility",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    packages=find_packages(),
+    packages=["audiobook_p"],
+    package_dir={"audiobook_p": "."},
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",

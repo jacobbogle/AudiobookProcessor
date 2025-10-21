@@ -1,0 +1,266 @@
+{
+  "format": "M4A/AAC",
+  "standard": "MP4/iTunes Metadata",
+  "description": "M4A/iTunes metadata mapping based on MP4 container and iTunes-specific atoms for audiobooks",
+  "reference_sources": [
+    "https://mutagen.readthedocs.io/en/latest/api/mp4.html",
+    "https://developer.apple.com/library/archive/documentation/QuickTime/QTFF/Metadata/Metadata.html",
+    "https://picard.musicbrainz.org/docs/mappings/",
+    "https://atomicparsley.sourceforge.net/mpeg-4files.html"
+  ],
+  "tags": {
+    "©nam": {
+      "mp4_atom": "©nam",
+      "description": "Track title - name of the individual track/chapter",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Individual chapter or track title",
+      "mutagen_key": "\\xa9nam",
+      "equivalent_id3": "TIT2"
+    },
+    "©alb": {
+      "mp4_atom": "©alb",
+      "description": "Album title - name of the album/book",
+      "data_type": "utf8_text", 
+      "audiobook_usage": "Audiobook title/name",
+      "mutagen_key": "\\xa9alb",
+      "equivalent_id3": "TALB"
+    },
+    "©ART": {
+      "mp4_atom": "©ART",
+      "description": "Artist - primary performing artist",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Narrator name or 'Various' for multiple narrators",
+      "mutagen_key": "\\xa9ART",
+      "equivalent_id3": "TPE1"
+    },
+    "aART": {
+      "mp4_atom": "aART",
+      "description": "Album artist - artist for the entire album",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Author name (primary album artist for audiobooks)",
+      "mutagen_key": "aART",
+      "equivalent_id3": "TPE2"
+    },
+    "©wrt": {
+      "mp4_atom": "©wrt",
+      "description": "Composer/Writer - person who composed the work",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Author name (literary composer)",
+      "mutagen_key": "\\xa9wrt",
+      "equivalent_id3": "TCOM"
+    },
+    "©day": {
+      "mp4_atom": "©day",
+      "description": "Date - recording or release date",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Publication year or date",
+      "mutagen_key": "\\xa9day",
+      "equivalent_id3": "TYER/TDRC"
+    },
+    "©gen": {
+      "mp4_atom": "©gen",
+      "description": "Genre - musical or content genre",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Genre (e.g., 'Audiobook', 'Fiction', 'Non-Fiction')",
+      "mutagen_key": "\\xa9gen",
+      "equivalent_id3": "TCON"
+    },
+    "trkn": {
+      "mp4_atom": "trkn",
+      "description": "Track number - track number and total tracks",
+      "data_type": "tuple_of_ints",
+      "audiobook_usage": "Chapter number and total chapters (track_num, total_tracks)",
+      "mutagen_key": "trkn",
+      "equivalent_id3": "TRCK"
+    },
+    "disk": {
+      "mp4_atom": "disk",
+      "description": "Disc number - disc number and total discs",
+      "data_type": "tuple_of_ints",
+      "audiobook_usage": "Disc number for multi-disc audiobooks (disc_num, total_discs)",
+      "mutagen_key": "disk",
+      "equivalent_id3": "TPOS"
+    },
+    "©cmt": {
+      "mp4_atom": "©cmt",
+      "description": "Comment - general comment or description",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Book description, summary, or notes",
+      "mutagen_key": "\\xa9cmt",
+      "equivalent_id3": "COMM"
+    },
+    "©too": {
+      "mp4_atom": "©too",
+      "description": "Encoded by - encoding tool or person",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Encoding software or person who created the files",
+      "mutagen_key": "\\xa9too",
+      "equivalent_id3": "TENC"
+    },
+    "covr": {
+      "mp4_atom": "covr",
+      "description": "Cover artwork - embedded cover art images",
+      "data_type": "list_of_mp4cover",
+      "audiobook_usage": "Book cover art (typically JPEG or PNG)",
+      "mutagen_key": "covr",
+      "equivalent_id3": "APIC"
+    },
+    "©lyr": {
+      "mp4_atom": "©lyr",
+      "description": "Lyrics - song lyrics or text content",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Chapter text or book excerpt (if applicable)",
+      "mutagen_key": "\\xa9lyr",
+      "equivalent_id3": "USLT"
+    },
+    "©grp": {
+      "mp4_atom": "©grp",
+      "description": "Grouping - content grouping or category",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Series name or book collection",
+      "mutagen_key": "\\xa9grp",
+      "equivalent_id3": "TIT1"
+    },
+    "desc": {
+      "mp4_atom": "desc",
+      "description": "Description - detailed description (used in podcasts)",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Chapter description or book subtitle",
+      "mutagen_key": "desc",
+      "equivalent_id3": "TIT3"
+    },
+    "stik": {
+      "mp4_atom": "stik",
+      "description": "Media Kind - type of media content",
+      "data_type": "integer",
+      "audiobook_usage": "Set to 2 for audiobook (critical for iTunes recognition)",
+      "mutagen_key": "stik",
+      "equivalent_id3": "none",
+      "values": {
+        "0": "Movie",
+        "1": "Music", 
+        "2": "Audiobook",
+        "6": "Music Video",
+        "9": "Short Film",
+        "10": "TV Show",
+        "11": "Booklet"
+      }
+    },
+    "pgap": {
+      "mp4_atom": "pgap",
+      "description": "Gapless Playback - indicates gapless album",
+      "data_type": "boolean",
+      "audiobook_usage": "Set to 1/True for seamless chapter transitions",
+      "mutagen_key": "pgap",
+      "equivalent_id3": "none"
+    },
+    "cprt": {
+      "mp4_atom": "cprt",
+      "description": "Copyright - copyright information",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Copyright information for the book",
+      "mutagen_key": "cprt",
+      "equivalent_id3": "TCOP"
+    },
+    "©pub": {
+      "mp4_atom": "©pub",
+      "description": "Publisher - publishing company or label",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Publishing house or audiobook publisher",
+      "mutagen_key": "\\xa9pub",
+      "equivalent_id3": "TPUB"
+    },
+    "rtng": {
+      "mp4_atom": "rtng",
+      "description": "Content Rating - content advisory rating",
+      "data_type": "integer",
+      "audiobook_usage": "Content rating (0=None, 1=Explicit, 2=Clean)",
+      "mutagen_key": "rtng",
+      "equivalent_id3": "none",
+      "values": {
+        "0": "None",
+        "1": "Explicit",
+        "2": "Clean"
+      }
+    },
+    "soal": {
+      "mp4_atom": "soal",
+      "description": "Album Sort Order - sort name for album",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Sort name for audiobook (e.g., 'Hobbit, The')",
+      "mutagen_key": "soal",
+      "equivalent_id3": "TSOA"
+    },
+    "soar": {
+      "mp4_atom": "soar",
+      "description": "Artist Sort Order - sort name for artist",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Sort name for narrator",
+      "mutagen_key": "soar",
+      "equivalent_id3": "TSOP"
+    },
+    "soaa": {
+      "mp4_atom": "soaa",
+      "description": "Album Artist Sort Order - sort name for album artist",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Sort name for author (e.g., 'Tolkien, J.R.R.')",
+      "mutagen_key": "soaa",
+      "equivalent_id3": "TSO2"
+    },
+    "sonm": {
+      "mp4_atom": "sonm",
+      "description": "Title Sort Order - sort name for title",
+      "data_type": "utf8_text",
+      "audiobook_usage": "Sort name for chapter title",
+      "mutagen_key": "sonm",
+      "equivalent_id3": "TSOT"
+    }
+  },
+  "freeform_tags": {
+    "description": "iTunes supports freeform tags using ---- atom with format ----:com.apple.iTunes:KEY_NAME",
+    "examples": {
+      "----:com.apple.iTunes:SERIES": "Book series name",
+      "----:com.apple.iTunes:NARRATOR": "Additional narrator information",
+      "----:com.apple.iTunes:LANGUAGE": "Language of audiobook",
+      "----:com.apple.iTunes:ISRC": "International Standard Recording Code",
+      "----:com.apple.iTunes:SUBTITLE": "Book subtitle"
+    },
+    "mutagen_format": "Use ----:mean:name format where mean is usually 'com.apple.iTunes'"
+  },
+  "audiobook_specific_configuration": {
+    "critical_tags": {
+      "stik": "Must be set to 2 for iTunes to recognize as audiobook",
+      "pgap": "Should be set to 1 for gapless playback between chapters",
+      "aART": "Should contain author name for proper album artist",
+      "©alb": "Should contain full book title",
+      "©nam": "Should contain chapter title or 'Chapter X' format"
+    },
+    "recommended_tags": {
+      "rtng": "Set content rating (0=None, 1=Explicit, 2=Clean)",
+      "©too": "Identify encoding tool for troubleshooting",
+      "covr": "Include high-quality book cover art",
+      "©day": "Include publication year",
+      "©gen": "Set to 'Audiobook' or specific genre"
+    }
+  },
+  "audiobook_vs_music_differences": {
+    "media_type": "stik=2 (audiobook) vs stik=1 (music) - critical for iTunes behavior",
+    "gapless_playback": "pgap=1 essential for audiobooks, optional for music",
+    "chapter_vs_track": "trkn represents chapters, not songs",
+    "narrator_vs_artist": "©ART is narrator, not musical performer",
+    "author_prominence": "aART (album artist) more important than ©ART for audiobooks",
+    "cover_art_significance": "Book cover is primary identifier, not promotional image",
+    "duration_expectations": "Individual tracks much longer (chapters vs songs)",
+    "description_usage": "desc and ©cmt more commonly used for plot summaries",
+    "series_information": "©grp and freeform SERIES tags common for book series"
+  },
+  "itunes_specific_behavior": {
+    "audiobook_recognition": "Requires stik=2 to appear in Audiobooks section",
+    "chapter_navigation": "Uses trkn for chapter navigation interface",
+    "bookmark_support": "Audiobooks get automatic bookmark/resume functionality",
+    "speed_control": "Audiobook-specific playback speed controls available",
+    "sleep_timer": "Special sleep timer features for audiobooks",
+    "library_organization": "Organized by author (aART) then title (©alb)",
+    "artwork_display": "Cover art displayed prominently in audiobook interface"
+  }
+}

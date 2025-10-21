@@ -1,0 +1,348 @@
+{
+  "_metadata": {
+    "description": "M4B/MP4 metadata mapping based on official iTunes and QuickTime specifications",
+    "sources": [
+      "https://mutagen.readthedocs.io/en/latest/api/mp4.html",
+      "https://picard-docs.musicbrainz.org/en/appendices/tag_mapping.html", 
+      "https://github.com/sergiomb2/libmp4v2/wiki/iTunesMetadata",
+      "Apple iTunes Metadata Format Specification"
+    ],
+    "format": "Each field contains mp4_atom, id3_source, data_type, and description"
+  },
+  
+  "title": {
+    "mp4_atom": "©nam",
+    "id3_source": "TIT2",
+    "data_type": "UTF-8 string",
+    "description": "Track/audiobook title - for audiobooks, typically use album name",
+    "audiobook_usage": "Main title displayed in iTunes/Music app"
+  },
+  
+  "album": {
+    "mp4_atom": "©alb", 
+    "id3_source": "TALB",
+    "data_type": "UTF-8 string",
+    "description": "Album name - series or book title",
+    "audiobook_usage": "Book or series name"
+  },
+  
+  "artist": {
+    "mp4_atom": "©ART",
+    "id3_source": "TPE1", 
+    "data_type": "UTF-8 string",
+    "description": "Primary artist - author or narrator",
+    "audiobook_usage": "Author name (primary)"
+  },
+  
+  "album_artist": {
+    "mp4_atom": "aART",
+    "id3_source": "TPE2",
+    "data_type": "UTF-8 string", 
+    "description": "Album artist - consistent artist for entire album",
+    "audiobook_usage": "Author name (for grouping multiple books)"
+  },
+  
+  "composer": {
+    "mp4_atom": "©wrt",
+    "id3_source": "TCOM",
+    "data_type": "UTF-8 string",
+    "description": "Composer - often same as author for audiobooks", 
+    "audiobook_usage": "Author/writer name"
+  },
+  
+  "genre": {
+    "mp4_atom": "©gen",
+    "id3_source": "TCON", 
+    "data_type": "UTF-8 string",
+    "description": "Genre classification",
+    "audiobook_usage": "Typically 'Audiobook' or specific genre like 'Science Fiction'"
+  },
+  
+  "release_date": {
+    "mp4_atom": "©day",
+    "id3_source": "TDRC",
+    "data_type": "UTF-8 string", 
+    "description": "Release date in YYYY-MM-DD format (may be partial)",
+    "audiobook_usage": "Publication or release date"
+  },
+  
+  "comment": {
+    "mp4_atom": "©cmt",
+    "id3_source": "COMM",
+    "data_type": "UTF-8 string",
+    "description": "General comments about the content",
+    "audiobook_usage": "Additional notes or short description"
+  },
+  
+  "description": {
+    "mp4_atom": "desc", 
+    "id3_source": "TIT3",
+    "data_type": "UTF-8 string",
+    "description": "Short description (255 bytes max historically)",
+    "audiobook_usage": "Brief book summary for podcasts/audiobooks"
+  },
+  
+  "long_description": {
+    "mp4_atom": "ldes",
+    "id3_source": "TXXX:LONGDESCRIPTION", 
+    "data_type": "UTF-8 string",
+    "description": "Extended description (no size limit)",
+    "audiobook_usage": "Full book summary or back-cover text"
+  },
+  
+  "lyrics": {
+    "mp4_atom": "©lyr",
+    "id3_source": "USLT",
+    "data_type": "UTF-8 string",
+    "description": "Lyrics or transcript text",
+    "audiobook_usage": "Chapter summaries or transcript excerpts"
+  },
+  
+  "conductor": {
+    "mp4_atom": "----:com.apple.iTunes:CONDUCTOR",
+    "id3_source": "TPE3", 
+    "data_type": "freeform UTF-8",
+    "description": "Conductor - can be used for narrator",
+    "audiobook_usage": "Narrator name (alternative field)"
+  },
+  
+  "grouping": {
+    "mp4_atom": "©grp",
+    "id3_source": "TIT1",
+    "data_type": "UTF-8 string", 
+    "description": "Content grouping",
+    "audiobook_usage": "Series grouping or collection name"
+  },
+  
+  "copyright": {
+    "mp4_atom": "cprt",
+    "id3_source": "TCOP",
+    "data_type": "UTF-8 string",
+    "description": "Copyright notice", 
+    "audiobook_usage": "Copyright information"
+  },
+  
+  "encoding_tool": {
+    "mp4_atom": "©too",
+    "id3_source": "TSSE",
+    "data_type": "UTF-8 string",
+    "description": "Software used for encoding",
+    "audiobook_usage": "Tool identification (e.g., 'audiobook-p')"
+  },
+  
+  "encoded_by": {
+    "mp4_atom": "©enc", 
+    "id3_source": "TENC",
+    "data_type": "UTF-8 string",
+    "description": "Person/company who encoded the file",
+    "audiobook_usage": "Encoder identification"
+  },
+  
+  "cover_art": {
+    "mp4_atom": "covr",
+    "id3_source": "APIC",
+    "data_type": "JPEG/PNG/BMP binary", 
+    "description": "Album artwork - can have multiple images",
+    "audiobook_usage": "Book cover image"
+  },
+  
+  "track_number": {
+    "mp4_atom": "trkn",
+    "id3_source": "TRCK",
+    "data_type": "binary (track, total)",
+    "description": "Track number and total tracks", 
+    "audiobook_usage": "Chapter number (if splitting by chapter)"
+  },
+  
+  "disc_number": {
+    "mp4_atom": "disk", 
+    "id3_source": "TPOS",
+    "data_type": "binary (disc, total)",
+    "description": "Disc number and total discs",
+    "audiobook_usage": "Volume/part number for multi-part books"
+  },
+  
+  "compilation": {
+    "mp4_atom": "cpil",
+    "id3_source": "TCMP",
+    "data_type": "8-bit boolean",
+    "description": "Part of compilation flag", 
+    "audiobook_usage": "Set to 1 for anthology collections"
+  },
+  
+  "media_kind": {
+    "mp4_atom": "stik",
+    "id3_source": null,
+    "data_type": "8-bit integer",
+    "description": "Media type: 0=Movie, 1=Music, 2=Audiobook, 6=Music Video, 9=Movie, 10=TV Show, 11=Booklet, 14=Ringtone",
+    "audiobook_usage": "Must be set to 2 for proper iTunes/Music app recognition"
+  },
+  
+  "content_rating": {
+    "mp4_atom": "rtng", 
+    "id3_source": null,
+    "data_type": "8-bit integer",
+    "description": "Content advisory: 0=None, 2=Clean, 4=Explicit",
+    "audiobook_usage": "Content rating for age appropriateness"
+  },
+  
+  "gapless_playback": {
+    "mp4_atom": "pgap",
+    "id3_source": null,
+    "data_type": "8-bit boolean",
+    "description": "Enable seamless playback between tracks",
+    "audiobook_usage": "Usually set to 1 for continuous audiobook experience"
+  },
+  
+  "podcast": {
+    "mp4_atom": "pcst",
+    "id3_source": null, 
+    "data_type": "8-bit boolean",
+    "description": "Marks content as podcast",
+    "audiobook_usage": "Set to 1 if audiobook should appear in podcast section"
+  },
+  
+  "podcast_url": {
+    "mp4_atom": "purl",
+    "id3_source": null,
+    "data_type": "UTF-8 string",
+    "description": "Podcast feed URL",
+    "audiobook_usage": "Source URL for episodic audiobooks"
+  },
+  
+  "category": {
+    "mp4_atom": "catg",
+    "id3_source": null,
+    "data_type": "UTF-8 string", 
+    "description": "Podcast category",
+    "audiobook_usage": "Content category for podcast-style audiobooks"
+  },
+  
+  "keywords": {
+    "mp4_atom": "keyw",
+    "id3_source": null,
+    "data_type": "UTF-8 string",
+    "description": "Keywords for searching/categorization",
+    "audiobook_usage": "Tags for content discovery"
+  },
+  
+  "sort_title": {
+    "mp4_atom": "sonm",
+    "id3_source": "TSOT", 
+    "data_type": "UTF-8 string",
+    "description": "Title for sorting (ignore articles like 'The', 'A')",
+    "audiobook_usage": "Sortable version of title"
+  },
+  
+  "sort_album": {
+    "mp4_atom": "soal",
+    "id3_source": "TSOA",
+    "data_type": "UTF-8 string",
+    "description": "Album name for sorting",
+    "audiobook_usage": "Sortable version of album/series name"
+  },
+  
+  "sort_artist": {
+    "mp4_atom": "soar",
+    "id3_source": "TSOP",
+    "data_type": "UTF-8 string", 
+    "description": "Artist name for sorting (Last, First format)",
+    "audiobook_usage": "Sortable author name"
+  },
+  
+  "sort_album_artist": {
+    "mp4_atom": "soaa",
+    "id3_source": "TSO2",
+    "data_type": "UTF-8 string",
+    "description": "Album artist for sorting",
+    "audiobook_usage": "Sortable album artist name"
+  },
+  
+  "sort_composer": {
+    "mp4_atom": "soco",
+    "id3_source": "TSOC", 
+    "data_type": "UTF-8 string",
+    "description": "Composer name for sorting",
+    "audiobook_usage": "Sortable composer/writer name"
+  },
+  
+  "tempo": {
+    "mp4_atom": "tmpo",
+    "id3_source": "TBPM",
+    "data_type": "16-bit integer",
+    "description": "Tempo in beats per minute",
+    "audiobook_usage": "Not typically used for audiobooks"
+  },
+  
+  "tv_show": {
+    "mp4_atom": "tvsh",
+    "id3_source": null,
+    "data_type": "UTF-8 string", 
+    "description": "TV show name",
+    "audiobook_usage": "Can be used for audiobook series name"
+  },
+  
+  "tv_season": {
+    "mp4_atom": "tvsn",
+    "id3_source": null,
+    "data_type": "32-bit integer",
+    "description": "TV season number", 
+    "audiobook_usage": "Book series volume number"
+  },
+  
+  "tv_episode": {
+    "mp4_atom": "tves",
+    "id3_source": null,
+    "data_type": "32-bit integer",
+    "description": "TV episode number",
+    "audiobook_usage": "Chapter or part number"
+  },
+  
+  "hd_video": {
+    "mp4_atom": "hdvd",
+    "id3_source": null,
+    "data_type": "8-bit boolean",
+    "description": "HD video flag", 
+    "audiobook_usage": "Not applicable to audio-only content"
+  },
+  
+  "purchase_date": {
+    "mp4_atom": "purd",
+    "id3_source": null,
+    "data_type": "UTF-8 string",
+    "description": "iTunes purchase date",
+    "audiobook_usage": "Automatic iTunes metadata"
+  },
+  
+  "account_id": {
+    "mp4_atom": "apID",
+    "id3_source": null, 
+    "data_type": "UTF-8 string",
+    "description": "iTunes account ID",
+    "audiobook_usage": "Automatic iTunes metadata (read-only)"
+  },
+  
+  "account_type": {
+    "mp4_atom": "akID", 
+    "id3_source": null,
+    "data_type": "8-bit integer",
+    "description": "iTunes Store account type: 0=iTunes, 1=AOL",
+    "audiobook_usage": "Automatic iTunes metadata (read-only)"
+  },
+  
+  "country_code": {
+    "mp4_atom": "sfID",
+    "id3_source": null,
+    "data_type": "32-bit integer",
+    "description": "iTunes Store country code",
+    "audiobook_usage": "Store region identification (read-only)"
+  },
+  
+  "catalog_id": {
+    "mp4_atom": "cnID", 
+    "id3_source": null,
+    "data_type": "32-bit integer",
+    "description": "iTunes catalog ID",
+    "audiobook_usage": "iTunes Store identifier (read-only)"
+  }
+}

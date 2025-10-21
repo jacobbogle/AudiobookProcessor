@@ -1,0 +1,188 @@
+{
+  "format": "MP3",
+  "standard": "ID3v2.3/ID3v2.4",
+  "description": "MP3 metadata mapping based on ID3v2 specification and audiobook usage patterns",
+  "reference_sources": [
+    "https://id3.org/id3v2.3.0",
+    "https://id3.org/id3v2.4.0-frames",
+    "https://picard.musicbrainz.org/docs/mappings/",
+    "https://mutagen.readthedocs.io/en/latest/api/id3.html"
+  ],
+  "tags": {
+    "TIT2": {
+      "id3_frame": "TIT2",
+      "description": "Title/songname/content description - actual name of the piece",
+      "data_type": "text_string",
+      "audiobook_usage": "Individual chapter or track title",
+      "mutagen_key": "TIT2",
+      "encoding": "text_encoding_byte + text_string"
+    },
+    "TALB": {
+      "id3_frame": "TALB",
+      "description": "Album/Movie/Show title - title of the recording from which audio is taken",
+      "data_type": "text_string", 
+      "audiobook_usage": "Audiobook title/name",
+      "mutagen_key": "TALB",
+      "encoding": "text_encoding_byte + text_string"
+    },
+    "TPE1": {
+      "id3_frame": "TPE1",
+      "description": "Lead artist/performer/soloist/performing group - main artist",
+      "data_type": "text_string",
+      "audiobook_usage": "Narrator name or 'Various' for multiple narrators",
+      "mutagen_key": "TPE1",
+      "encoding": "text_encoding_byte + text_string"
+    },
+    "TPE2": {
+      "id3_frame": "TPE2",
+      "description": "Band/Orchestra/Accompaniment - additional performer information",
+      "data_type": "text_string",
+      "audiobook_usage": "Album artist (typically author name for audiobooks)",
+      "mutagen_key": "TPE2",
+      "encoding": "text_encoding_byte + text_string"
+    },
+    "TCOM": {
+      "id3_frame": "TCOM",
+      "description": "Composer - name of the composer",
+      "data_type": "text_string",
+      "audiobook_usage": "Author name (literary composer)",
+      "mutagen_key": "TCOM",
+      "encoding": "text_encoding_byte + text_string"
+    },
+    "TYER": {
+      "id3_frame": "TYER",
+      "description": "Year - year of the recording (ID3v2.3)",
+      "data_type": "numeric_string",
+      "audiobook_usage": "Publication year",
+      "mutagen_key": "TYER",
+      "encoding": "text_encoding_byte + year_string"
+    },
+    "TDRC": {
+      "id3_frame": "TDRC",
+      "description": "Recording time - timestamp when audio was recorded (ID3v2.4)",
+      "data_type": "timestamp",
+      "audiobook_usage": "Publication or recording date",
+      "mutagen_key": "TDRC",
+      "encoding": "text_encoding_byte + timestamp_string"
+    },
+    "TCON": {
+      "id3_frame": "TCON",
+      "description": "Content type - genre information",
+      "data_type": "text_string",
+      "audiobook_usage": "Genre (e.g., 'Audiobook', 'Fiction', 'Non-Fiction')",
+      "mutagen_key": "TCON",
+      "encoding": "text_encoding_byte + text_string"
+    },
+    "TRCK": {
+      "id3_frame": "TRCK",
+      "description": "Track number/Position in set - order number on original recording",
+      "data_type": "numeric_string",
+      "audiobook_usage": "Chapter number (e.g., '1/12' for chapter 1 of 12)",
+      "mutagen_key": "TRCK",
+      "encoding": "text_encoding_byte + track_string"
+    },
+    "TPOS": {
+      "id3_frame": "TPOS",
+      "description": "Part of a set - which part of a set the audio came from",
+      "data_type": "numeric_string",
+      "audiobook_usage": "Disc number for multi-disc audiobooks (e.g., '1/3')",
+      "mutagen_key": "TPOS",
+      "encoding": "text_encoding_byte + position_string"
+    },
+    "TLEN": {
+      "id3_frame": "TLEN",
+      "description": "Length - length of audiofile in milliseconds",
+      "data_type": "numeric_string",
+      "audiobook_usage": "Chapter/track duration in milliseconds",
+      "mutagen_key": "TLEN",
+      "encoding": "text_encoding_byte + length_string"
+    },
+    "TPUB": {
+      "id3_frame": "TPUB",
+      "description": "Publisher - name of the label or publisher",
+      "data_type": "text_string",
+      "audiobook_usage": "Publishing house or audiobook publisher",
+      "mutagen_key": "TPUB",
+      "encoding": "text_encoding_byte + text_string"
+    },
+    "TCOP": {
+      "id3_frame": "TCOP",
+      "description": "Copyright message - copyright holder of original sound",
+      "data_type": "text_string",
+      "audiobook_usage": "Copyright information (must begin with year and space)",
+      "mutagen_key": "TCOP",
+      "encoding": "text_encoding_byte + copyright_string"
+    },
+    "TENC": {
+      "id3_frame": "TENC",
+      "description": "Encoded by - person or organization that encoded the audio",
+      "data_type": "text_string",
+      "audiobook_usage": "Encoding software or person who created the files",
+      "mutagen_key": "TENC",
+      "encoding": "text_encoding_byte + text_string"
+    },
+    "COMM": {
+      "id3_frame": "COMM",
+      "description": "Comments - full text information that doesn't fit other frames",
+      "data_type": "comment_structure",
+      "audiobook_usage": "Book description, summary, or notes",
+      "mutagen_key": "COMM",
+      "encoding": "text_encoding_byte + language + description + comment_text"
+    },
+    "APIC": {
+      "id3_frame": "APIC",
+      "description": "Attached picture - picture directly related to audio file",
+      "data_type": "binary_image",
+      "audiobook_usage": "Book cover art or author photo",
+      "mutagen_key": "APIC",
+      "encoding": "text_encoding_byte + mime_type + picture_type_byte + description + image_data"
+    },
+    "USLT": {
+      "id3_frame": "USLT",
+      "description": "Unsynchronised lyrics/text transcription - lyrics or text transcription",
+      "data_type": "text_structure",
+      "audiobook_usage": "Chapter text or book excerpt (if applicable)",
+      "mutagen_key": "USLT",
+      "encoding": "text_encoding_byte + language + content_descriptor + lyrics_text"
+    },
+    "TIT1": {
+      "id3_frame": "TIT1",
+      "description": "Content group description - larger category of sounds/music",
+      "data_type": "text_string",
+      "audiobook_usage": "Series name or book collection",
+      "mutagen_key": "TIT1",
+      "encoding": "text_encoding_byte + text_string"
+    },
+    "TIT3": {
+      "id3_frame": "TIT3",
+      "description": "Subtitle/Description refinement - information related to title",
+      "data_type": "text_string",
+      "audiobook_usage": "Book subtitle or chapter description",
+      "mutagen_key": "TIT3",
+      "encoding": "text_encoding_byte + text_string"
+    },
+    "TLAN": {
+      "id3_frame": "TLAN",
+      "description": "Language - languages of text or lyrics spoken/sung",
+      "data_type": "language_code",
+      "audiobook_usage": "Language of audiobook (ISO-639-2 format, e.g., 'eng')",
+      "mutagen_key": "TLAN",
+      "encoding": "text_encoding_byte + language_codes"
+    }
+  },
+  "audiobook_specific_notes": {
+    "track_numbering": "Use TRCK for chapter numbers, TPOS for disc numbers in multi-disc sets",
+    "artist_vs_author": "TPE1 for narrator, TPE2 for album artist (author), TCOM for composer (author)",
+    "title_hierarchy": "TALB for book title, TIT2 for chapter title, TIT1 for series, TIT3 for subtitle",
+    "cover_art": "APIC with picture type $03 (Cover front) for book cover",
+    "copyright": "TCOP must begin with year and space character",
+    "encoding_compatibility": "Use ISO-8859-1 or UTF-16 encoding, specified by first byte"
+  },
+  "differences_from_music": {
+    "content_focus": "Chapters instead of songs, books instead of albums",
+    "artist_semantics": "Narrator vs singer, author vs composer/songwriter",
+    "duration_expectations": "Much longer individual tracks (chapters)",
+    "metadata_richness": "Often includes detailed descriptions, series information",
+    "cover_art_importance": "Book cover is primary visual identifier"
+  }
+}
