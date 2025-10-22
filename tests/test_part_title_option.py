@@ -4,7 +4,7 @@ from audiobook_p import main as mainmod
 
 
 def test_part_title_groups_and_filenames(tmp_path, monkeypatch):
-    """Verify --part-title groups files into parts of 10, sets titles, and renames files."""
+    """Verify --part-titles groups files into parts of 10, sets titles, and renames files."""
     # Create source folder with 21 dummy files
     src_dir = tmp_path / "Source Book 01"
     src_dir.mkdir()
@@ -34,7 +34,7 @@ def test_part_title_groups_and_filenames(tmp_path, monkeypatch):
     monkeypatch.setattr(mainmod, 'apply_metadata_to_file', fake_apply_metadata_to_file)
 
     # Run mutate_metadata with part_title=True
-    mutated = mainmod.mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_title=True)
+    mutated = mainmod.mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=True)
 
     # Ensure mutated path exists
     assert os.path.isdir(mutated)

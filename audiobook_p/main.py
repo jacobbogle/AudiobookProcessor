@@ -965,38 +965,58 @@ def copy_folder(source_path, max_attempts=5):
     if not os.path.exists(source_path) or not os.path.isdir(source_path):
         return None
 
-    for attempt in range(max_attempts):
-        try:
-            # Create a temporary directory
-            temp_dir = tempfile.mkdtemp(prefix="audiobook_copy_")
-            temp_path = temp_dir
+    # Prefer deterministic temp folder names in the system temp directory so
+    # the copied folder is easier to locate and includes the original basename.
+    try:
+        base = os.path.basename(source_path) or "source"
+        dest_base = f"temp-{base}"
+        temp_root = tempfile.gettempdir()
 
-            # Copy the entire folder
-            dest_path = os.path.join(temp_path, os.path.basename(source_path))
+        # Find a non-colliding candidate like /tmp/temp-Source or /tmp/temp-Source-1
+        candidate = os.path.join(temp_root, dest_base)
+        suffix = 0
+        while os.path.exists(candidate):
+            suffix += 1
+            candidate = os.path.join(temp_root, f"{dest_base}-{suffix}")
+
+        # Copy the tree directly into the candidate path
+        shutil.copytree(source_path, candidate)
+        return str(candidate)
+    except Exception:
+        # If the deterministic approach fails (permission issues, non-writable
+        # temp dir, etc.), fall back to the previous retrying mkdtemp-based copy
+        for attempt in range(max_attempts):
             try:
-                # Try Python 3 version first
-                shutil.copytree(source_path, dest_path, dirs_exist_ok=True)
-            except TypeError:
-                # Python 2.7 doesn't have dirs_exist_ok parameter
-                shutil.copytree(source_path, dest_path)
+                # Create a temporary directory
+                temp_dir = tempfile.mkdtemp(prefix="audiobook_copy_")
+                temp_path = temp_dir
 
-            # Return the path to the copied folder
-            return str(dest_path)
+                # Copy the entire folder under the created temp dir
+                dest_path = os.path.join(temp_path, os.path.basename(source_path))
+                try:
+                    # Try Python 3 version first
+                    shutil.copytree(source_path, dest_path, dirs_exist_ok=True)
+                except TypeError:
+                    # Older shutil.copytree doesn't accept dirs_exist_ok
+                    shutil.copytree(source_path, dest_path)
 
-        except Exception:
-            # Clean up failed temp directory if it was created
-            try:
-                if 'temp_path' in locals():
-                    shutil.rmtree(temp_path, ignore_errors=True)
+                # Return the path to the copied folder
+                return str(dest_path)
+
             except Exception:
-                pass
+                # Clean up failed temp directory if it was created
+                try:
+                    if 'temp_path' in locals() and os.path.exists(temp_path):
+                        shutil.rmtree(temp_path)
+                except Exception:
+                    pass
 
-            # If this was the last attempt, return None
-            if attempt == max_attempts - 1:
-                return None
+                # If this was the last attempt, return None
+                if attempt == max_attempts - 1:
+                    return None
 
-            # Otherwise continue to next attempt
-            continue
+                # Otherwise continue to next attempt
+                continue
 
     # This should never be reached, but just in case
     return None
@@ -1225,7 +1245,7 @@ def apply_metadata_to_file(file_path, metadata_dict):
                 raise
 
 
-def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_title=False):
+def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=False, author_name=None):
     """
     Mutate metadata for all files in a folder based on folder type.
 
@@ -1276,7 +1296,7 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
         # Default: sort by filename naturally
         sorted_files = sorted(files_dict.keys(), key=natural_sort_key)
     
-    # Collect per-file rename operations when part_title is enabled, then
+    # Collect per-file rename operations when part_titles is enabled, then
     # perform them after metadata is written to avoid missing files when
     # names are changed mid-iteration.
     rename_ops = []
@@ -1438,6 +1458,24 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
             current_album = updated_metadata.get('album', '')
             updated_metadata['album'] = "{} - {}".format(current_album, album_suffix)
 
+        # If an explicit author/artist name was provided on the CLI, sanitize it and
+        # set it on the per-file metadata as the 'artist' tag.
+        cleaned_author_input = None
+        if author_name:
+            try:
+                cleaned_author_input = book_title_logic(author_name).strip()
+            except Exception:
+                try:
+                    cleaned_author_input = str(author_name).strip()
+                except Exception:
+                    cleaned_author_input = None
+
+        if cleaned_author_input:
+            try:
+                updated_metadata['artist'] = cleaned_author_input
+            except Exception:
+                pass
+
     # Set title: use existing title metadata if available, otherwise use filename as written
         file_stem = os.path.splitext(os.path.basename(source_file))[0]
         if chapter_titles:
@@ -1478,8 +1516,8 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
             cleaned_title = file_stem
         updated_metadata['title'] = cleaned_title
 
-        # If part_title option is requested, override title and schedule rename
-        if part_title:
+        # If part_titles option is requested, override title and schedule rename
+        if part_titles:
             try:
                 # Part number increments every 10 files: 1 for 1-10, 2 for 11-20, etc.
                 part_num = 1 + ((index - 1) // 10)
@@ -1635,7 +1673,7 @@ def get_sleep_prevention_command():
     return []
 
 
-def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filename', original_source_path=None, chapter_titles=False, series_name=None):
+def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filename', original_source_path=None, chapter_titles=False, series_name=None, temp_copy_path=None):
     """
     Convert a folder of audio files (os.path.join(MP3, M4A)) to a single M4B file with chapters.
 
@@ -2020,6 +2058,68 @@ try {{
             os.remove(metadata_path)
         except Exception as e:
             logger.debug("Failed to remove metadata_path %s: %s", metadata_path, e)
+
+        # If an explicit temp_copy_path was provided, prefer removing that exact path.
+        # This allows callers (for example mutate->convert flows) to pass the concrete
+        # temporary folder returned by `copy_folder` so we can remove it deterministically.
+        try:
+            if temp_copy_path:
+                try:
+                    temp_root = os.path.abspath(tempfile.gettempdir())
+                except Exception:
+                    temp_root = None
+
+                try:
+                    remove_ok = False
+                    if os.path.exists(temp_copy_path):
+                        # If it's under the system temp directory, it's safe to remove
+                        if temp_root and os.path.commonpath([os.path.abspath(temp_copy_path), temp_root]) == temp_root:
+                            remove_ok = True
+                        # Also allow removal if the basename matches our temp naming conventions
+                        base = os.path.basename(temp_copy_path)
+                        if base.startswith('temp-') or base.startswith('audiobook_copy_'):
+                            remove_ok = True
+
+                    if remove_ok and os.path.exists(temp_copy_path):
+                        try:
+                            shutil.rmtree(temp_copy_path)
+                            logger.debug("Removed explicit temp_copy_path %s", temp_copy_path)
+                        except Exception as e:
+                            logger.debug("Failed to remove explicit temp_copy_path %s: %s", temp_copy_path, e)
+                except Exception:
+                    # If anything goes wrong here, fall back to heuristic below
+                    pass
+
+            # If no explicit temp_copy_path was provided or removal above didn't occur,
+            # fall back to the previous heuristic: remove folder_path when it looks
+            # like a tool-created temp copy under the system temp dir.
+            if not temp_copy_path or not (os.path.exists(temp_copy_path) and base.startswith(('temp-', 'audiobook_copy_'))):
+                try:
+                    try:
+                        temp_root = os.path.abspath(tempfile.gettempdir())
+                    except Exception:
+                        temp_root = None
+
+                    # Resolve absolute path for safety
+                    try:
+                        folder_abspath = os.path.abspath(folder_path)
+                    except Exception:
+                        folder_abspath = None
+
+                    if folder_abspath and temp_root and folder_abspath.startswith(temp_root + os.sep):
+                        base2 = os.path.basename(folder_abspath)
+                        if base2.startswith('audiobook_copy_') or base2.startswith('temp-'):
+                            try:
+                                shutil.rmtree(folder_abspath, ignore_errors=True)
+                                logger.debug("Removed temporary folder %s", folder_abspath)
+                            except Exception as e:
+                                logger.debug("Failed to remove temporary folder %s: %s", folder_abspath, e)
+                except Exception:
+                    # Don't let cleanup failures surface
+                    pass
+        except Exception:
+            # Don't let cleanup failures surface
+            pass
 
 
 def add_chapters_to_m4b(m4b_path, chapters_info):
@@ -3131,7 +3231,9 @@ def cmd_convert(args, original_source_path=None):
 
         # Convert to M4B with enhanced progress tracking
         def convert_operation():
-            return convert_folder_to_m4b(str(source_path), str(final_output_path), config, args.sort_by, original_source_path, getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+            # Pass the folder being converted as temp_copy_path so cleanup can remove
+            # the exact folder we created during mutate/convert flows.
+            return convert_folder_to_m4b(str(source_path), str(final_output_path), config, args.sort_by, original_source_path, getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), temp_copy_path=str(source_path))
         
         if logger:
             m4b_path = safe_operation("M4B Conversion", convert_operation)
@@ -3145,7 +3247,8 @@ def cmd_convert(args, original_source_path=None):
                 args.sort_by,
                 original_source_path,
                 chapter_titles=getattr(args, 'chapter_titles', False),
-                series_name=getattr(args, 'series_name', None)
+                series_name=getattr(args, 'series_name', None),
+                temp_copy_path=str(source_path)
             )
 
         # Display results
@@ -3316,7 +3419,7 @@ def cmd_mutate(args):
                 # Simple novel folder
                 # Extract metadata first, then mutate
                 metadata_dict = extract_metadata_from_folder(str(source_path), "novel")
-                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
+                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
                 final_path = move_to_destination(mutated_path, str(destination_path), "novel")
                 result = {
                     "operation": "mutate",
@@ -3342,7 +3445,7 @@ def cmd_mutate(args):
                                         # Extract metadata first
                                         metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                         # Then mutate
-                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
+                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
                                         # Move to destination
                                         final_path = move_to_destination(mutated_path, str(destination_path), folder_type)
                                         mutated_results.append({
@@ -3379,7 +3482,7 @@ def cmd_mutate(args):
                                     for path in item['paths']:
                                         try:
                                             metadata_dict = extract_metadata_from_folder(path, "series")
-                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
+                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
                                             final_path = move_to_destination(mutated_path, str(destination_path), "series")
                                             mutated_results.append({
                                                 "folder_type": "series",
@@ -3418,7 +3521,7 @@ def cmd_mutate(args):
                                     # Extract metadata first
                                     metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                     # Then mutate
-                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), part_title=getattr(args, 'part_title', False))
+                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
                                     # Move to destination
                                     final_path = move_to_destination(mutated_path, str(destination_path), folder_type)
                                     mutated_results.append({
@@ -3543,7 +3646,7 @@ def cmd_mutate_convert(args):
                 # Simple novel folder
                 # Extract metadata first, then mutate
                 metadata_dict = extract_metadata_from_folder(str(source_path), "novel")
-                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
+                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
                 temp_mutated_path = move_to_destination(mutated_path, temp_dir, "novel")
                 
                 logger.info("Mutated files created in: %s", temp_mutated_path)
@@ -3582,7 +3685,7 @@ def cmd_mutate_convert(args):
                                         # Extract metadata first
                                         metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                         # Then mutate
-                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
+                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
                                         # Move to temp directory
                                         temp_mutated_path = move_to_destination(mutated_path, temp_dir, folder_type)
                                         
@@ -3637,7 +3740,7 @@ def cmd_mutate_convert(args):
                                     for path in item['paths']:
                                         try:
                                             metadata_dict = extract_metadata_from_folder(path, "series")
-                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
+                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
                                             temp_mutated_path = move_to_destination(mutated_path, temp_dir, "series")
                                             
                                             # Convert to M4B
@@ -3692,7 +3795,7 @@ def cmd_mutate_convert(args):
                                     # Extract metadata first
                                     metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                     # Then mutate
-                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
+                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
                                     # Move to temp directory
                                     temp_mutated_path = move_to_destination(mutated_path, temp_dir, folder_type)
                                     
@@ -3797,7 +3900,8 @@ def cli(argv=None):
     mutate_parser.add_argument('--album-suffix', help='String to suffix album with " - " separator')
     mutate_parser.add_argument('--chapter-titles', action='store_true', help='Use "BookName: Chapter X" format for track titles instead of existing titles')
     mutate_parser.add_argument('--series-name', help='Explicit series name to apply to grouping and series freeform')
-    mutate_parser.add_argument('--part-title', action='store_true', help='Set titles and filenames to "<Cleaned Folder Name>: Part N" grouping every 10 files')
+    mutate_parser.add_argument('--part-titles', action='store_true', help='Set titles and filenames to "<Cleaned Folder Name>: Part N" grouping every 10 files')
+    mutate_parser.add_argument('--author-name', help='Explicit author/artist name to apply to artist tag (will be cleaned)')
     mutate_parser.set_defaults(func=cmd_mutate)
 
     # Convert command
@@ -3817,7 +3921,8 @@ def cli(argv=None):
     mutate_convert_parser.add_argument('--sort-by', choices=['filename', 'track'], default='filename', help='Sort files by filename (default) or track number metadata')
     mutate_convert_parser.add_argument('--chapter-titles', action='store_true', help='Use "BookName: Chapter X" format for track titles instead of existing titles')
     mutate_convert_parser.add_argument('--series-name', help='Explicit series name to apply to grouping and series freeform')
-    mutate_convert_parser.add_argument('--part-title', action='store_true', help='Set titles and filenames to "<Cleaned Folder Name>: Part N" grouping every 10 files')
+    mutate_convert_parser.add_argument('--part-titles', action='store_true', help='Set titles and filenames to "<Cleaned Folder Name>: Part N" grouping every 10 files')
+    mutate_convert_parser.add_argument('--author-name', help='Explicit author/artist name to apply to artist tag (will be cleaned)')
     mutate_convert_parser.set_defaults(func=cmd_mutate_convert)
 
     # Config command

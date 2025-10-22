@@ -70,7 +70,7 @@ def process_audiobook_workflow(source_folder, output_file, album_prefix=None, al
             temp_output = os.path.join(temp_dir, "mutated")
 
             # Mutate the metadata
-            mutated_path = mutate_metadata(metadata, album_prefix, album_suffix)
+            mutated_path = mutate_metadata(metadata, album_prefix, album_suffix, author_name=None)
 
             # Move to temp location
             final_mutated_path = move_to_destination(mutated_path, str(temp_output), "novel")
@@ -80,7 +80,7 @@ def process_audiobook_workflow(source_folder, output_file, album_prefix=None, al
             # Step 3: Convert to M4B
             logger.info("Step 3: Converting to M4B with chapters...")
             try:
-                m4b_path = convert_folder_to_m4b(final_mutated_path, str(output_path))
+                m4b_path = convert_folder_to_m4b(final_mutated_path, str(output_path), temp_copy_path=final_mutated_path)
                 logger.info("Successfully created M4B file: %s", m4b_path)
 
                 # Get file size
