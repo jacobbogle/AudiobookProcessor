@@ -1225,7 +1225,7 @@ def apply_metadata_to_file(file_path, metadata_dict):
                 raise
 
 
-def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None):
+def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_title=False):
     """
     Mutate metadata for all files in a folder based on folder type.
 
@@ -1276,6 +1276,10 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
         # Default: sort by filename naturally
         sorted_files = sorted(files_dict.keys(), key=natural_sort_key)
     
+    # Collect per-file rename operations when part_title is enabled, then
+    # perform them after metadata is written to avoid missing files when
+    # names are changed mid-iteration.
+    rename_ops = []
     for index, source_file_path in enumerate(sorted_files, 1):
         metadata = files_dict[source_file_path]
 
@@ -1434,7 +1438,7 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
             current_album = updated_metadata.get('album', '')
             updated_metadata['album'] = "{} - {}".format(current_album, album_suffix)
 
-        # Set title: use existing title metadata if available, otherwise use filename as written
+    # Set title: use existing title metadata if available, otherwise use filename as written
         file_stem = os.path.splitext(os.path.basename(source_file))[0]
         if chapter_titles:
             # Primary prefix: use the parent folder name of the file being processed
@@ -1474,6 +1478,52 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
             cleaned_title = file_stem
         updated_metadata['title'] = cleaned_title
 
+        # If part_title option is requested, override title and schedule rename
+        if part_title:
+            try:
+                # Part number increments every 10 files: 1 for 1-10, 2 for 11-20, etc.
+                part_num = 1 + ((index - 1) // 10)
+                # Use cleaned folder name for the part prefix
+                part_title_str = "{}: Part {}".format(cleaned_folder_name, part_num)
+                updated_metadata['title'] = part_title_str
+
+                # Sanitize a filename-friendly base from the cleaned folder name
+                def _sanitize_for_filename(n):
+                    import re
+                    if not n:
+                        return n
+                    s = str(n).strip()
+                    # Replace problematic path chars with dashes
+                    s = re.sub(r'[\\/:\*\?"<>|]+', ' - ', s)
+                    # Remove leading punctuation/underscores/spaces
+                    s = re.sub(r'^[\-\._\s]+', '', s)
+                    # Remove leading numeric prefixes like '01 -', '1 '
+                    s = re.sub(r'^\d{1,3}[\s\-:\._]+', '', s)
+                    # Collapse multiple spaces and separators
+                    s = re.sub(r'\s{2,}', ' ', s).strip()
+                    return s
+
+                safe_base = _sanitize_for_filename(cleaned_folder_name)
+                # Keep extension
+                _, ext = os.path.splitext(temp_file)
+                # Create unique filename within part by including the index
+                new_basename = "{}: Part {} - {}{}".format(safe_base, part_num, str(index).zfill(3), ext)
+                new_temp_file = os.path.join(temp_path, new_basename)
+
+                # If a file with the target name already exists, append a short counter
+                cnt = 1
+                candidate = new_temp_file
+                while os.path.exists(candidate) and os.path.abspath(candidate) != os.path.abspath(temp_file):
+                    name_only, e = os.path.splitext(new_basename)
+                    candidate = os.path.join(temp_path, f"{name_only} ({cnt}){e}")
+                    cnt += 1
+
+                # Schedule rename after metadata writes
+                rename_ops.append((temp_file, candidate))
+            except Exception:
+                # Non-fatal: continue processing other files
+                pass
+
     # Set title_sort to uncleaned filename stem (mapping expects 'title_sort')
     updated_metadata['title_sort'] = file_stem
 
@@ -1495,9 +1545,25 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
 
     # Apply changes to the temp file
     try:
+        try:
+            logger.debug("Applying metadata to %s", temp_file)
+        except Exception:
+            pass
+        # (Previously had a debug print here for test diagnostics.)
         apply_metadata_to_file(str(temp_file), updated_metadata)
     except Exception as e:
         print("Warning: Failed to update metadata for {}: {}".format(temp_file, e))
+
+    # After writing metadata for each file, perform any scheduled renames
+    if rename_ops:
+        for src_old, dst_new in rename_ops:
+            try:
+                # Only rename if the source exists (it may have been removed or skipped)
+                if os.path.exists(src_old) and not os.path.exists(dst_new):
+                    os.rename(src_old, dst_new)
+            except Exception:
+                # Non-fatal; continue with others
+                pass
 
     # Clean up the folder name in temp directory
     cleaned_temp_folder_name = book_title_logic(os.path.basename(temp_path))
@@ -3250,7 +3316,7 @@ def cmd_mutate(args):
                 # Simple novel folder
                 # Extract metadata first, then mutate
                 metadata_dict = extract_metadata_from_folder(str(source_path), "novel")
-                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
                 final_path = move_to_destination(mutated_path, str(destination_path), "novel")
                 result = {
                     "operation": "mutate",
@@ -3276,7 +3342,7 @@ def cmd_mutate(args):
                                         # Extract metadata first
                                         metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                         # Then mutate
-                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
                                         # Move to destination
                                         final_path = move_to_destination(mutated_path, str(destination_path), folder_type)
                                         mutated_results.append({
@@ -3313,7 +3379,7 @@ def cmd_mutate(args):
                                     for path in item['paths']:
                                         try:
                                             metadata_dict = extract_metadata_from_folder(path, "series")
-                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
                                             final_path = move_to_destination(mutated_path, str(destination_path), "series")
                                             mutated_results.append({
                                                 "folder_type": "series",
@@ -3352,7 +3418,7 @@ def cmd_mutate(args):
                                     # Extract metadata first
                                     metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                     # Then mutate
-                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False))
+                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), part_title=getattr(args, 'part_title', False))
                                     # Move to destination
                                     final_path = move_to_destination(mutated_path, str(destination_path), folder_type)
                                     mutated_results.append({
@@ -3477,7 +3543,7 @@ def cmd_mutate_convert(args):
                 # Simple novel folder
                 # Extract metadata first, then mutate
                 metadata_dict = extract_metadata_from_folder(str(source_path), "novel")
-                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
                 temp_mutated_path = move_to_destination(mutated_path, temp_dir, "novel")
                 
                 logger.info("Mutated files created in: %s", temp_mutated_path)
@@ -3516,7 +3582,7 @@ def cmd_mutate_convert(args):
                                         # Extract metadata first
                                         metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                         # Then mutate
-                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
                                         # Move to temp directory
                                         temp_mutated_path = move_to_destination(mutated_path, temp_dir, folder_type)
                                         
@@ -3571,7 +3637,7 @@ def cmd_mutate_convert(args):
                                     for path in item['paths']:
                                         try:
                                             metadata_dict = extract_metadata_from_folder(path, "series")
-                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
                                             temp_mutated_path = move_to_destination(mutated_path, temp_dir, "series")
                                             
                                             # Convert to M4B
@@ -3626,7 +3692,7 @@ def cmd_mutate_convert(args):
                                     # Extract metadata first
                                     metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                     # Then mutate
-                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_title=getattr(args, 'part_title', False))
                                     # Move to temp directory
                                     temp_mutated_path = move_to_destination(mutated_path, temp_dir, folder_type)
                                     
@@ -3731,6 +3797,7 @@ def cli(argv=None):
     mutate_parser.add_argument('--album-suffix', help='String to suffix album with " - " separator')
     mutate_parser.add_argument('--chapter-titles', action='store_true', help='Use "BookName: Chapter X" format for track titles instead of existing titles')
     mutate_parser.add_argument('--series-name', help='Explicit series name to apply to grouping and series freeform')
+    mutate_parser.add_argument('--part-title', action='store_true', help='Set titles and filenames to "<Cleaned Folder Name>: Part N" grouping every 10 files')
     mutate_parser.set_defaults(func=cmd_mutate)
 
     # Convert command
@@ -3750,6 +3817,7 @@ def cli(argv=None):
     mutate_convert_parser.add_argument('--sort-by', choices=['filename', 'track'], default='filename', help='Sort files by filename (default) or track number metadata')
     mutate_convert_parser.add_argument('--chapter-titles', action='store_true', help='Use "BookName: Chapter X" format for track titles instead of existing titles')
     mutate_convert_parser.add_argument('--series-name', help='Explicit series name to apply to grouping and series freeform')
+    mutate_convert_parser.add_argument('--part-title', action='store_true', help='Set titles and filenames to "<Cleaned Folder Name>: Part N" grouping every 10 files')
     mutate_convert_parser.set_defaults(func=cmd_mutate_convert)
 
     # Config command
