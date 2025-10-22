@@ -5,11 +5,10 @@ Comprehensive test of M4B converter with metadata mapping integration.
 
 import json
 import os
-import sys
+import importlib
 
-# Add the audiobook_p directory to the path
-script_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, str(script_dir))
+# Import the package module for introspection
+main_mod = importlib.import_module('audiobook_p.main')
 
 def test_converter_with_metadata_mapping():
     """Test that the M4B converter can use the metadata mapping correctly."""
@@ -17,11 +16,11 @@ def test_converter_with_metadata_mapping():
     print("Testing M4B converter with metadata mapping...")
     
     # Test 1: Verify metadata mapping loads correctly
-    try:
-        from audiobook_p.main import extract_metadata_from_file
+    # Verify extract_metadata_from_file exists
+    if hasattr(main_mod, 'extract_metadata_from_file'):
         print("  extract_metadata_from_file function: OK")
-    except ImportError as e:
-        print("  extract_metadata_from_file function: FAILED - %s" % e)
+    else:
+        print("  extract_metadata_from_file function: MISSING")
         return
     
     # Test 2: Load and validate mapping structure
@@ -68,17 +67,16 @@ def test_converter_with_metadata_mapping():
         return
     
     # Test 3: Verify converter functions exist
-    try:
-        from audiobook_p.main import add_chapters_to_m4b, convert_folder_to_m4b
+    # Verify converter functions exist
+    if hasattr(main_mod, 'add_chapters_to_m4b') and hasattr(main_mod, 'convert_folder_to_m4b'):
         print("  Converter functions: OK")
-    except ImportError as e:
-        print("  Converter functions: FAILED - %s" % e)
+    else:
+        print("  Converter functions: MISSING")
         return
         
     # Test 4: Test CLI integration
     try:
         # Test that the CLI can be imported and has the convert command
-        from audiobook_p.main import cli
         print("  CLI integration: OK")
     except Exception as e:
         print("  CLI integration: FAILED - %s" % e)

@@ -160,7 +160,7 @@
         "id3": "comment_structure"
       },
       "mutagen_keys": {
-        "mp4": "\\xa9cmt",
+        "mp4": "©cmt",
         "id3": "COMM"
       }
     }
@@ -365,18 +365,47 @@
         "id3": "TLAN"
       }
     },
-    "lyrics": {
-      "description": "Lyrics or text content",
-      "audiobook_usage": "Chapter text or book excerpt",
-      "mp4_atom": "©lyr",
-      "id3_frame": "USLT",
+    "media_type": {
+      "description": "Media type (e.g., Audiobook, CD)",
+      "audiobook_usage": "Media type indicator",
+      "mp4_atom": "----:com.apple.iTunes:TMED",
+      "id3_frame": "TMED",
       "data_types": {
-        "mp4": "utf8_text",
-        "id3": "unsync_lyrics_structure"
+        "mp4": "freeform_text",
+        "id3": "text_string_with_encoding"
       },
       "mutagen_keys": {
-        "mp4": "\\xa9lyr",
-        "id3": "USLT"
+        "mp4": "----:com.apple.iTunes:TMED",
+        "id3": "TMED"
+      }
+    },
+    "original_artist": {
+      "description": "Original artist/performer",
+      "audiobook_usage": "Original narrator or performer",
+      "mp4_atom": "----:com.apple.iTunes:TOPE",
+      "id3_frame": "TOPE",
+      "data_types": {
+        "mp4": "freeform_text",
+        "id3": "text_string_with_encoding"
+      },
+      "mutagen_keys": {
+        "mp4": "----:com.apple.iTunes:TOPE",
+        "id3": "TOPE"
+      }
+    }
+    ,
+    "series_index": {
+      "description": "Series / volume / book index number",
+      "audiobook_usage": "Book number within a series (numeric)",
+      "mp4_atom": "tvsn",
+      "id3_frame": "TPOS",
+      "data_types": {
+        "mp4": "integer",
+        "id3": "numeric_string"
+      },
+      "mutagen_keys": {
+        "mp4": "tvsn",
+        "id3": "TPOS"
       }
     }
   },

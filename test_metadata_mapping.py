@@ -11,7 +11,6 @@ import sys
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, str(script_dir))
 
-from audiobook_p.main import extract_metadata_from_file
 
 def test_metadata_mapping():
     """Test that metadata mapping is working correctly."""

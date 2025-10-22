@@ -5,30 +5,44 @@ Progress tracking and user feedback for audiobook processing operations.
 
 import sys
 import time
-from typing import Optional, Callable, Any
+import logging
+from typing import Callable, Any
 
 
 class ProgressTracker:
     """Simple progress tracker for console applications"""
     
-    def __init__(self, total: int, description: str = "Processing", show_percentage: bool = True):
+    def __init__(self, total: int, description: str = "Processing", show_percentage: bool = True, bar_width: int = 20):
         self.total = total
         self.current = 0
         self.description = description
         self.show_percentage = show_percentage
+        self.bar_width = bar_width
         self.start_time = time.time()
-        self.last_update = 0
+        self.last_display = ""
+        
+        # Detect Unicode support and set characters accordingly
+        self._detect_unicode_support()
+        
+    def _detect_unicode_support(self):
+        """Detect if Unicode characters are supported and set appropriate characters"""
+        try:
+            # Try to encode Unicode characters
+            '█'.encode(sys.stdout.encoding or 'utf-8')
+            '░'.encode(sys.stdout.encoding or 'utf-8')
+            # If successful, use Unicode block characters
+            self.filled_char = '█'
+            self.empty_char = '░'
+        except (UnicodeEncodeError, LookupError):
+            # Fall back to ASCII characters
+            self.filled_char = '#'
+            self.empty_char = '-'
         
     def update(self, increment: int = 1, message: str = None):
         """Update progress by increment amount"""
         self.current += increment
         
-        # Don't update more than once per 0.1 seconds to avoid spam
-        current_time = time.time()
-        if current_time - self.last_update < 0.1 and self.current < self.total:
-            return
-        
-        self.last_update = current_time
+        # Display progress
         self._display_progress(message)
         
     def set_progress(self, current: int, message: str = None):
@@ -37,18 +51,27 @@ class ProgressTracker:
         self._display_progress(message)
         
     def _display_progress(self, message: str = None):
-        """Display current progress"""
+        """Display current progress with a loading bar"""
+        if self.total == 0:
+            return
+            
+        percentage = (self.current / self.total) * 100
+        
+        # Create loading bar using detected characters
+        filled_width = int(self.bar_width * self.current / self.total)
+        bar = self.filled_char * filled_width + self.empty_char * (self.bar_width - filled_width)
+        
+        # Build progress string
+        progress_str = f"{self.description}: [{bar}] {self.current}/{self.total}"
+        
         if self.show_percentage:
-            percentage = (self.current / self.total) * 100
-            progress_str = f"{self.description}: {self.current}/{self.total} ({percentage:.1f}%)"
-        else:
-            progress_str = f"{self.description}: {self.current}/{self.total}"
+            progress_str += f" ({percentage:.1f}%)"
         
         if message:
             progress_str += f" - {message}"
         
         # Add estimated time remaining
-        if self.current > 0:
+        if self.current > 0 and self.current < self.total:
             elapsed = time.time() - self.start_time
             rate = self.current / elapsed
             if rate > 0:
@@ -60,58 +83,50 @@ class ProgressTracker:
                     eta_str = f"{int(eta_seconds // 60)}m {int(eta_seconds % 60)}s"
                 progress_str += f" (ETA: {eta_str})"
         
-        # Clear line and print progress
-        print(f"\r{progress_str:<80}", end="", flush=True)
+        # Only print if different from last display to avoid spam
+        if progress_str != self.last_display:
+            # Clear the current line using ANSI escape code and print the new progress
+            print('\033[2K\r', end='', flush=True)  # Clear entire line and return to start
+            print(progress_str, end='', flush=True)  # Print new progress without newline
+            self.last_display = progress_str
         
-        if self.current >= self.total:
-            elapsed = time.time() - self.start_time
-            print(f"\n✓ Completed in {elapsed:.1f}s")
-    
     def finish(self, message: str = "Complete"):
         """Mark progress as finished"""
         self.current = self.total
-        self._display_progress(message)
+        
+        # Show final progress bar
+        bar = "█" * self.bar_width
+        elapsed = time.time() - self.start_time
+        
+        progress_str = f"{self.description}: [{bar}] {self.current}/{self.total} (100.0%)"
+        if message:
+            progress_str += f" - {message}"
+        progress_str += f" ✓ Completed in {elapsed:.1f}s"
+        
+        print(progress_str)  # Final message should stay on screen
+        print()  # Add newline for subsequent output
 
 
 class Logger:
-    """Simple logging for audiobook processing"""
-    
-    LEVELS = {
-        'DEBUG': 0,
-        'INFO': 1,
-        'WARNING': 2,
-        'ERROR': 3
-    }
-    
+    """Adapter that forwards to Python's logging while keeping a simple API."""
+
     def __init__(self, level: str = 'INFO', show_timestamps: bool = False):
-        self.level = self.LEVELS.get(level.upper(), 1)
+        self.logger = logging.getLogger('audiobook_p.progress')
+        if not self.logger.handlers:
+            logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
         self.show_timestamps = show_timestamps
-    
-    def _log(self, level: str, message: str):
-        """Internal logging method"""
-        if self.LEVELS.get(level.upper(), 1) >= self.level:
-            timestamp = ""
-            if self.show_timestamps:
-                timestamp = f"[{time.strftime('%H:%M:%S')}] "
-            
-            level_str = f"[{level.upper()}]"
-            print(f"{timestamp}{level_str} {message}")
-    
+
     def debug(self, message: str):
-        """Log debug message"""
-        self._log('DEBUG', message)
-    
+        self.logger.debug(message)
+
     def info(self, message: str):
-        """Log info message"""
-        self._log('INFO', message)
-    
+        self.logger.info(message)
+
     def warning(self, message: str):
-        """Log warning message"""
-        self._log('WARNING', message)
-    
+        self.logger.warning(message)
+
     def error(self, message: str):
-        """Log error message"""
-        self._log('ERROR', message)
+        self.logger.error(message)
 
 
 def with_progress(func: Callable, items: list, description: str = "Processing") -> Any:
@@ -254,7 +269,7 @@ def show_processing_estimate(file_count: int, total_size_mb: float):
     conversion_time = total_size_mb * 2  # ~2 seconds per MB
     total_estimate = metadata_time + conversion_time
     
-    print(f"\n📊 Processing Estimate:")
+    print("\n📊 Processing Estimate:")
     print(f"   Files: {file_count}")
     print(f"   Total Size: {total_size_mb:.1f} MB")
     
@@ -273,7 +288,6 @@ if __name__ == "__main__":
     print("Testing progress tracking...")
     
     # Test basic progress tracker
-    import random
     
     items = list(range(10))
     progress = ProgressTracker(len(items), "Testing")
@@ -287,7 +301,7 @@ if __name__ == "__main__":
     # Test logger
     logger = Logger('INFO')
     logger.info("This is an info message")
-    logger.warning("This is a warning")
+    logger.debug("This is a debug message")
     logger.error("This is an error")
     
     print("\nProgress tracking system ready")

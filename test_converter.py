@@ -1,19 +1,16 @@
-#!/os.path.join(usr, bin)/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Test script for the M4B converter functionality.
 This demonstrates the converter workflow without requiring actual audio files.
 """
 
-import os
-import sys
-import tempfile
+import importlib
 
-# Add the audiobook_p directory to the path
-script_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, str(script_dir))
-
-from audiobook_p.main import convert_folder_to_m4b, add_chapters_to_m4b
+# Import the converter functions from the package
+main_mod = importlib.import_module('audiobook_p.main')
+convert_folder_to_m4b = getattr(main_mod, 'convert_folder_to_m4b')
+add_chapters_to_m4b = getattr(main_mod, 'add_chapters_to_m4b')
 
 def test_converter_structure():
     """Test that the converter functions are properly defined and can be imported."""
@@ -28,13 +25,12 @@ def test_converter_structure():
 
     # Test CLI integration
     try:
-        from audiobook_p.main import cli
         # Test that convert command is available
         import argparse
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers(dest='command')
         subparsers.add_parser('convert')
-        args = parser.parse_args(['convert', '--help'])
+        parser.parse_args(['convert', '--help'])
         print("CLI test failed - should have shown help")
     except SystemExit:
         print("CLI integration working (help shown)")

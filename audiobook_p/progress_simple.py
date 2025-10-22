@@ -30,7 +30,6 @@ class SimpleLogger:
 
 def simple_progress(current, total, description="Processing"):
     """Simple progress display"""
-    import sys
     percentage = (current / float(total)) * 100
     sys.stdout.write("\r{}: {}/{} ({:.1f}%)".format(description, current, total, percentage))
     sys.stdout.flush()

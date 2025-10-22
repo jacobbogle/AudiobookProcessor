@@ -12,19 +12,22 @@ Usage:
 """
 
 import argparse
-import json
 import sys
+import logging
+import os
+import importlib
 
-# Add the audiobook_p directory to the path
-script_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, str(script_dir))
+# Module logger
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
-from audiobook_p.main import (
-    extract_metadata_from_folder,
-    mutate_metadata,
-    convert_folder_to_m4b,
-    move_to_destination
-)
+# Import core functions from the package
+main_mod = importlib.import_module('audiobook_p.main')
+extract_metadata_from_folder = getattr(main_mod, 'extract_metadata_from_folder')
+mutate_metadata = getattr(main_mod, 'mutate_metadata')
+convert_folder_to_m4b = getattr(main_mod, 'convert_folder_to_m4b')
+move_to_destination = getattr(main_mod, 'move_to_destination')
 
 def process_audiobook_workflow(source_folder, output_file, album_prefix=None, album_suffix=None):
     """
@@ -40,29 +43,26 @@ def process_audiobook_workflow(source_folder, output_file, album_prefix=None, al
     source_path = source_folder
     output_path = output_file
 
-    print("🎵 Processing audiobook: {}".format(os.path.basename(source_path)))
-    print("📁 Source: {}".format(source_path))
-    print("🎧 Output: {}".format(output_path))
+    logger.info("Processing audiobook: %s", os.path.basename(source_path))
+    logger.info("Source: %s", source_path)
+    logger.info("Output: %s", output_path)
 
     if album_prefix:
-        print("🏷️  Album sort prefix: '{}'".format(album_prefix))
+        logger.info("Album sort prefix: %s", album_prefix)
     if album_suffix:
-        print("🏷️  Album suffix: '{}'".format(album_suffix))
+        logger.info("Album suffix: %s", album_suffix)
 
     # Step 1: Extract metadata
-    print("\n📊 Step 1: Extracting metadata...")
+    logger.info("Step 1: Extracting metadata...")
     try:
         metadata = extract_metadata_from_folder(str(source_path), "novel")
-        print("✅ Found {} audio files".format(len(metadata['files'])))
+        logger.info("Found %d audio files", len(metadata['files']))
     except Exception as e:
-        print("❌ Failed to extract metadata: {}".format(e))
-        return False
-    except Exception as e:
-        print("❌ Failed to extract metadata: {}".format(e))
+        logger.error("Failed to extract metadata: %s", e)
         return False
 
     # Step 2: Mutate metadata (optional customization)
-    print("\n🔄 Step 2: Applying metadata mutations...")
+    logger.info("Step 2: Applying metadata mutations...")
     try:
         # Create a temporary directory for mutated files
         import tempfile
@@ -75,28 +75,28 @@ def process_audiobook_workflow(source_folder, output_file, album_prefix=None, al
             # Move to temp location
             final_mutated_path = move_to_destination(mutated_path, str(temp_output), "novel")
 
-            print("✅ Metadata mutated and saved to: {}".format(final_mutated_path))
+            logger.info("Metadata mutated and saved to: %s", final_mutated_path)
 
             # Step 3: Convert to M4B
-            print("\n🎵 Step 3: Converting to M4B with chapters...")
+            logger.info("Step 3: Converting to M4B with chapters...")
             try:
                 m4b_path = convert_folder_to_m4b(final_mutated_path, str(output_path))
-                print("✅ Successfully created M4B file: {}".format(m4b_path))
+                logger.info("Successfully created M4B file: %s", m4b_path)
 
                 # Get file size
                 file_size = os.path.getsize(m4b_path) / (1024 * 1024)  # MB
-                print("📏 File size: {} MB".format(file_size:.1f))
-                print("\n🎉 Audiobook processing complete!")
-                print("📖 Final M4B file: {}".format(output_path))
+                logger.info("File size: %.1f MB", file_size)
+                logger.info("Audiobook processing complete!")
+                logger.info("Final M4B file: %s", output_path)
 
                 return True
 
             except Exception as e:
-                print("❌ Failed to convert to M4B: {}".format(e))
+                logger.error("Failed to convert to M4B: %s", e)
                 return False
 
     except Exception as e:
-        print("❌ Failed to mutate metadata: {}".format(e))
+        logger.error("Failed to mutate metadata: %s", e)
         return False
 
 def main():
@@ -114,7 +114,7 @@ def main():
         args.source,
         args.output,
         args.prefix,
-        os.path.splitext(args)[1]
+        args.suffix
     )
 
     sys.exit(0 if success else 1)

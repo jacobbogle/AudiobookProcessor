@@ -18,7 +18,8 @@ class Config:
             "overwrite_existing": False,
             "preserve_original": True,
             "parallel_processing": True,
-            "max_workers": 4
+            "max_workers": 4,
+            "sort_by_track_number": False
         },
         "metadata": {
             "default_genre": "Audiobook",

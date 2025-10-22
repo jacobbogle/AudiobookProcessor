@@ -6,6 +6,12 @@ Enhanced validation and error handling for audiobook processing.
 import os
 import subprocess
 from mutagen import File as MutagenFile
+import re
+import logging
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 
 class ValidationError(Exception):
@@ -118,12 +124,12 @@ def validate_folder_structure(folder_path):
                     validate_audio_file(file_path)
                     audio_files.append(file_path)
                 except ValidationError as e:
-                    print("Warning: Skipping invalid file - {}".format(e))
+                    logger.debug("Skipping invalid file - %s", e)
     
     if not audio_files:
         raise ValidationError("No valid audio files found in: {}".format(folder_path))
     
-    return sorted(audio_files)
+    return sorted(audio_files, key=natural_sort_key)
 
 
 def validate_output_path(output_path):
@@ -158,7 +164,7 @@ def validate_output_path(output_path):
     
     # Check if output file already exists and warn
     if os.path.exists(output_path):
-        print("Warning: Output file already exists and will be overwritten: {}".format(output_path))
+        logger.debug("Output file already exists and will be overwritten: %s", output_path)
     
     return output_path
 
@@ -225,16 +231,16 @@ def safe_file_operation(operation_func, *args, **kwargs):
             try:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
-            except:
-                pass
+            except Exception as e:
+                logger.debug("Failed to remove temp file %s: %s", temp_file, e)
         
         for temp_dir in temp_dirs:
             try:
                 if os.path.exists(temp_dir):
                     import shutil
                     shutil.rmtree(temp_dir)
-            except:
-                pass
+            except Exception as e:
+                logger.debug("Failed to remove temp dir %s: %s", temp_dir, e)
         
         # Re-raise the original exception
         raise e
@@ -257,14 +263,25 @@ def progress_callback(current, total, operation="Processing"):
         print()  # New line when complete
 
 
+def natural_sort_key(filename):
+    """
+    Generate a sort key for natural sorting (handles numbers correctly).
+    E.g., "Chapter 2.mp3" < "Chapter 10.mp3"
+    """
+    # Split into parts: alternating strings and numbers
+    parts = re.split(r'(\d+)', filename)
+    # Convert numeric parts to integers for proper sorting
+    return [int(part) if part.isdigit() else part.lower() for part in parts]
+
+
 if __name__ == "__main__":
     # Quick test of validation functions
-    print("Testing validation functions...")
-    
+    logger.info("Testing validation functions...")
+
     try:
         check_dependencies()
-        print("✓ Dependencies check passed")
+        logger.info("✓ Dependencies check passed")
     except DependencyError as e:
-        print("✗ Dependencies check failed: {}".format(e))
-    
-    print("Validation module ready for use")
+        logger.error("✗ Dependencies check failed: %s", e)
+
+    logger.info("Validation module ready for use")
