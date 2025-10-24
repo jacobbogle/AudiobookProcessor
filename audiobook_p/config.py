@@ -75,7 +75,8 @@ class Config:
                 self.config_path = config_path
                 
             except (json.JSONDecodeError, IOError) as e:
-                print("Warning: Could not load config from {}: {}".format(config_path, e))
+                import logging
+                logging.getLogger(__name__).warning("Could not load config from %s: %s", config_path, e)
     
     def _deep_merge(self, base_dict, update_dict):
         """Recursively merge update_dict into base_dict"""
@@ -151,11 +152,13 @@ class Config:
             with open(save_path, 'w') as f:
                 json.dump(self.config, f, indent=2)
             
-            print("Configuration saved to: {}".format(save_path))
+            import logging
+            logging.getLogger(__name__).info("Configuration saved to: %s", save_path)
             self.config_path = save_path
             
         except IOError as e:
-            print("Error saving configuration: {}".format(e))
+            import logging
+            logging.getLogger(__name__).error("Error saving configuration: %s", e)
     
     def reset_to_defaults(self):
         """Reset configuration to default values"""
@@ -163,8 +166,9 @@ class Config:
     
     def show_config(self):
         """Display current configuration"""
-        print("Current Configuration:")
-        print(json.dumps(self.config, indent=2))
+        import logging
+        logging.getLogger(__name__).info("Current Configuration:")
+        logging.getLogger(__name__).info(json.dumps(self.config, indent=2))
     
     def get_processing_settings(self):
         """Get processing-specific settings"""
@@ -223,22 +227,24 @@ def create_default_config_file(path=None):
     with open(path, 'w') as f:
         json.dump(config_with_comments, f, indent=2)
     
-    print("Default configuration file created at: {}".format(path))
-    print("Edit this file to customize audiobook processing settings.")
+    import logging
+    logging.getLogger(__name__).info("Default configuration file created at: %s", path)
+    logging.getLogger(__name__).info("Edit this file to customize audiobook processing settings.")
 
 
 if __name__ == "__main__":
     # Test configuration system
-    print("Testing configuration system...")
+    import logging
+    logging.getLogger(__name__).info("Testing configuration system...")
     
     config = get_config()
     
-    print("FFmpeg quality: {}".format(config.get('processing.ffmpeg_quality')))
-    print("Default genre: {}".format(config.get('metadata.default_genre')))
-    print("Progress reporting: {}".format(config.get('output.progress_reporting')))
+    logging.getLogger(__name__).info("FFmpeg quality: %s", config.get('processing.ffmpeg_quality'))
+    logging.getLogger(__name__).info("Default genre: %s", config.get('metadata.default_genre'))
+    logging.getLogger(__name__).info("Progress reporting: %s", config.get('output.progress_reporting'))
     
     # Test setting a value
     config.set('processing.ffmpeg_quality', '192k')
-    print("Updated FFmpeg quality: {}".format(config.get('processing.ffmpeg_quality')))
+    logging.getLogger(__name__).info("Updated FFmpeg quality: %s", config.get('processing.ffmpeg_quality'))
     
-    print("Configuration system ready")
+    logging.getLogger(__name__).info("Configuration system ready")

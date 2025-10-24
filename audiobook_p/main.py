@@ -8,66 +8,95 @@ import shutil
 import sys
 import tempfile
 import logging
+import mutagen
+from mutagen.mp3 import MP3
+try:
+    from mutagen.id3 import TIT2, TIT1, TPE1, TALB, TCON, TPE2, TCOM, TRCK, TPOS, TSOA, TSOT, TSOP, TSO2, TMED
+except Exception:
+    TIT2 = TIT1 = TPE1 = TALB = TCON = TPE2 = TCOM = TRCK = TPOS = TSOA = TSOT = TSOP = TSO2 = TMED = None
 
 # Module logger
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
-# Auto-install required packages
-try:
-    import mutagen
-    from mutagen.mp3 import MP3
-    from mutagen.id3 import TIT2, TIT1, TPE1, TALB, TCON, TSOA, TSOT, TRCK, TMED, TPE2, TCOM, TPOS, TSOP, TSO2
-except ImportError:
-    logging.getLogger(__name__).warning("mutagen not installed. Installing...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "mutagen"])
-    import mutagen
-    from mutagen.mp3 import MP3
-    from mutagen.id3 import TIT2, TPE1, TALB, TCON, TSOA, TSOT, TRCK, TMED, TPE2, TCOM, TPOS, TSOP, TSO2
 
-# Optional utils functions: try to dynamically import audiobook_p.utils if available
-try:
-    import importlib
-    utils_mod = importlib.import_module('audiobook_p.utils')
-    novel_verify = getattr(utils_mod, 'novel_verify', None)
-    series_verify = getattr(utils_mod, 'series_verify', None)
-    batch_verify = getattr(utils_mod, 'batch_verify', None)
-    book_title_logic = getattr(utils_mod, 'book_title_logic', None)
-    remove_track_numbers = getattr(utils_mod, 'remove_track_numbers', None)
-except Exception:
-    # Fallback if utils module not present
-    novel_verify = None
-    series_verify = None
-    batch_verify = None
+def sanitize_string(value, replace_underscores=True):
+    """Normalize a string for display/storage.
 
-    def remove_track_numbers(x):
-        return x
-
-    # Define book_title_logic locally
-    def book_title_logic(title):
-        """
-        Remove track numbers from chapter titles.
-        Examples:
-        - "01 Chapter Title" -> "Chapter Title"
-        - "1 Introduction" -> "Introduction" 
-        - "01 01 The Beginning" -> "01 The Beginning" (removes first number)
-        """
+    - Decodes to str where possible
+    - Removes non-printable control characters
+    - Optionally replaces runs of underscores with a single space
+    - Collapses all whitespace (including newlines/tabs) to single spaces
+    - Trims leading/trailing whitespace
+    Idempotent on repeated calls and safe for non-string inputs (returns input).
+    """
+    if value is None:
+        return value
+    try:
+        s = str(value)
+    except Exception:
+        return value
+    try:
         import re
-        if not title:
-            return title
-        # Remove the first leading track number and whitespace
-        cleaned = re.sub(r'^(\d+\s+)', '', title)
-        # Capitalize the first letter (find the first alphabetic character)
-        if cleaned:
-            # Find the first alphabetic character and capitalize it
-            for i, char in enumerate(cleaned):
-                if char.isalpha():
-                    return cleaned[:i] + char.upper() + cleaned[i+1:]
-            # If no alphabetic characters, return as-is
-            return cleaned
-        return cleaned
+        # First, collapse any whitespace (spaces, newlines, tabs) to single space
+        s = re.sub(r'\s+', ' ', s)
+        # Remove remaining C0 control characters and DEL (excluding common whitespace we already normalized)
+        s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+', '', s)
+        if replace_underscores:
+            s = re.sub(r'_+', ' ', s)
+        # Final trim
+        s = s.strip()
+    except Exception:
+        try:
+            s = s.strip()
+        except Exception:
+            pass
+    return s
+
+
+def book_title_logic(name):
+    """Normalize a book/title-like string.
+
+    - Strips leading/trailing whitespace
+    - Removes common numeric prefixes like '01 -', '(01) ', '1.'
+    - Collapses extra spaces
+    - Capitalizes the first alphabetic character (preserves the rest)
+    """
+    if not name:
+        return name
+    try:
+        s = str(name).strip()
+    except Exception:
+        return name
+
+    import re
+    # Remove common leading numeric prefixes and surrounding punctuation
+    s = re.sub(r'^\s*(?:\(|)?\d{1,3}(?:\)|)?(?:\s|-|\.|:)+', '', s)
+    # Remove leading punctuation/underscores/spaces
+    s = re.sub(r'^[\-\._\s]+', '', s)
+    # Collapse multiple spaces
+    s = re.sub(r'\s{2,}', ' ', s).strip()
+
+    # Capitalize first alphabetic character only, leave remainder alone
+    cleaned = s
+    # Ensure sanitized output whenever we perform cleaning
+    try:
+        cleaned = sanitize_string(cleaned)
+    except Exception:
+        pass
+
+    for i, ch in enumerate(cleaned):
+        if ch.isalpha():
+            return cleaned[:i] + ch.upper() + cleaned[i+1:]
+    return cleaned
+
+
+# Optional helpers that may be provided by audiobook_p.validation; import if available
+try:
+    from audiobook_p.validation import batch_verify, series_verify
+except Exception:
+    batch_verify = None
+    series_verify = None
+
 
 
 def extract_metadata_from_file(file_path):
@@ -494,7 +523,7 @@ def _determine_track_value_for_sources(source_files, MutagenFile):
         try:
             if 'trkn' in fa.tags:
                 try:
-                    logger.debug("DBG: _determine_track_value_for_sources found MP4 trkn: %r on %s", fa.tags.get('trkn'), first)
+                    logger.debug("_determine_track_value_for_sources found MP4 trkn: %r on %s", fa.tags.get('trkn'), first)
                 except Exception:
                     pass
                 return (fa.tags['trkn'], True)
@@ -508,12 +537,12 @@ def _determine_track_value_for_sources(source_files, MutagenFile):
                     if isinstance(ak, str) and ak.upper().startswith('TRCK'):
                         raw = fa.tags[ak]
                         try:
-                            logger.debug("DBG: _determine_track_value_for_sources found ID3 TRCK raw=%r on %s", raw, first)
+                            logger.debug("_determine_track_value_for_sources found ID3 TRCK raw=%r on %s", raw, first)
                         except Exception:
                             pass
                         formatted = reformat_tag_for_file_type('track_number', raw, 'mp4')
                         try:
-                            logger.debug("DBG: _determine_track_value_for_sources formatted TRCK -> %r", formatted)
+                            logger.debug("_determine_track_value_for_sources formatted TRCK -> %r", formatted)
                         except Exception:
                             pass
                         return (formatted, True)
@@ -819,8 +848,17 @@ def clean_album_name(name):
     if not cleaned:
         return name.strip()
 
+    # Sanitize the cleaned result so album names are single-line and printable
+    try:
+        cleaned = sanitize_string(cleaned)
+    except Exception:
+        pass
+
     # Title-case the result (simple but effective for album names)
-    return cleaned.title()
+    try:
+        return cleaned.title()
+    except Exception:
+        return cleaned
 
 
 def sanitize_series_name(name):
@@ -848,8 +886,21 @@ def sanitize_series_name(name):
     s = re.sub(r'^[\-\._\s]+', '', s)
     # Remove leading numeric prefixes like '01 -', '1 ', '01.'
     s = re.sub(r'^\d{1,3}[\s\-:\._]+', '', s)
-    # Collapse multiple spaces
+    # Replace hyphens/underscores with spaces and collapse multiple spaces
+    s = re.sub(r'[-_]+', ' ', s)
     s = re.sub(r'\s{2,}', ' ', s).strip()
+
+    # Final sanitize pass to ensure consistent single-line output
+    try:
+        s = sanitize_string(s)
+    except Exception:
+        pass
+
+    # Title-case for consistent appearance
+    try:
+        s = s.title()
+    except Exception:
+        pass
 
     return s if s else None
 
@@ -1245,7 +1296,7 @@ def apply_metadata_to_file(file_path, metadata_dict):
                 raise
 
 
-def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=False, author_name=None):
+def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=False, author_name=None, narrator_name=None, author_fix=False, in_place=False):
     """
     Mutate metadata for all files in a folder based on folder type.
 
@@ -1254,7 +1305,7 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
             - folder_type: "novel" or "series"
             - folder: path to source folder
             - files: dict of {file_path: metadata_dict}
-        album_sort_prefix: Optional string to prefix album_sort with " : " separator
+        album_sort_prefix: Optional string to prefix album_sort with " - " separator
         album_suffix: Optional string to suffix album with " - " separator
         sort_by: How to sort files ('filename' or 'track')
         chapter_titles: If True, use "BookName: Chapter X" format for titles
@@ -1269,12 +1320,14 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
     if not source_folder or not files_dict:
         raise ValueError("Invalid metadata_dict: missing folder or files")
 
-    # Copy folder to temp location
-    temp_folder = copy_folder(source_folder)
-    if not temp_folder:
-        raise ValueError("Failed to copy folder: {}".format(source_folder))
-
-    temp_path = temp_folder
+    # Copy folder to temp location unless in_place is requested
+    if in_place:
+        temp_path = source_folder
+    else:
+        temp_folder = copy_folder(source_folder)
+        if not temp_folder:
+            raise ValueError("Failed to copy folder: {}".format(source_folder))
+        temp_path = temp_folder
 
     # Get folder names for processing
     source_path = source_folder
@@ -1454,9 +1507,22 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
                 pass
 
         # Apply album suffix if provided
+        # NOTE: do not append suffix to the actual ©alb value for series folders
+        # because that can introduce universe/branding suffixes (e.g. " - Warhammer 40K").
+        # Instead, apply any provided suffix to album_sort so sorting reflects the
+        # desired prefix/suffix without contaminating the album display value.
         if album_suffix:
-            current_album = updated_metadata.get('album', '')
-            updated_metadata['album'] = "{} - {}".format(current_album, album_suffix)
+            try:
+                current_album_sort = updated_metadata.get('album_sort', '')
+                if current_album_sort:
+                    updated_metadata['album_sort'] = "{} - {}".format(current_album_sort, album_suffix)
+                else:
+                    # If no album_sort exists yet, fall back to using album as base
+                    current_album = updated_metadata.get('album', '')
+                    updated_metadata['album_sort'] = "{} - {}".format(current_album, album_suffix)
+            except Exception:
+                # On any failure, avoid mutating the display album and skip suffix
+                pass
 
         # If an explicit author/artist name was provided on the CLI, sanitize it and
         # set it on the per-file metadata as the 'artist' tag.
@@ -1476,12 +1542,42 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
             except Exception:
                 pass
 
-    # Set title: use existing title metadata if available, otherwise use filename as written
+        # Respect author_fix flag: apply Last, First -> First Last to any artist/author-like fields
+        if author_fix:
+            try:
+                if updated_metadata.get('artist'):
+                    updated_metadata['artist'] = _maybe_fix_author(updated_metadata.get('artist'), True)
+                if updated_metadata.get('album_artist'):
+                    updated_metadata['album_artist'] = _maybe_fix_author(updated_metadata.get('album_artist'), True)
+                if updated_metadata.get('composer'):
+                    updated_metadata['composer'] = _maybe_fix_author(updated_metadata.get('composer'), True)
+            except Exception:
+                pass
+
+        # If an explicit narrator/composer name was provided on the CLI, sanitize it and
+        # set it on the per-file metadata as the 'composer' tag.
+        cleaned_narrator_input = None
+        if narrator_name:
+            try:
+                cleaned_narrator_input = book_title_logic(narrator_name).strip()
+            except Exception:
+                try:
+                    cleaned_narrator_input = str(narrator_name).strip()
+                except Exception:
+                    cleaned_narrator_input = None
+
+        if cleaned_narrator_input:
+            try:
+                updated_metadata['composer'] = cleaned_narrator_input
+            except Exception:
+                pass
+
+        # Set title: use existing title metadata if available, otherwise use filename as written
         file_stem = os.path.splitext(os.path.basename(source_file))[0]
         if chapter_titles:
             # Primary prefix: use the parent folder name of the file being processed
             # (i.e., the folder that contains the file). This allows titles like
-            # "Inkheart: Chapter 1" even when the overall source folder name is
+            # "Inkheart - Chapter 1" even when the overall source folder name is
             # different. Fall back to album/grouping, cleaned source folder name,
             # filename, or finally just "Chapter N".
             try:
@@ -1504,10 +1600,43 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
             except Exception:
                 book_name_for_title = str(book_name_for_title).strip()
 
+            # Use deterministic folder-based chapter titles when chapter_titles is requested.
+            # Do not preserve per-file embedded titles in this mode - user requested
+            # a consistent "Folder Name - Chapter N" layout.
             if book_name_for_title:
-                cleaned_title = "{}: Chapter {}".format(book_name_for_title, index)
+                cleaned_title = "{} - Chapter {}".format(book_name_for_title, index)
             else:
                 cleaned_title = "Chapter {}".format(index)
+
+            # If chapter_titles requested, schedule a filename rename to match the cleaned title.
+            # This keeps renaming deferred until after metadata is written (via rename_ops).
+            try:
+                import re
+                # Use centralized sanitizer first to remove control chars/underscores
+                safe_title = sanitize_string(cleaned_title, replace_underscores=True)
+                # Replace filesystem-illegal chars with a neutral separator
+                safe_title = re.sub(r'[\\/:\*\?"<>\|]+', ' - ', safe_title)
+                safe_title = re.sub(r'^[\-\._\s]+', '', safe_title)
+                safe_title = re.sub(r'\s{2,}', ' ', safe_title).strip()
+            except Exception:
+                safe_title = sanitize_string(str(cleaned_title), replace_underscores=True)
+
+            try:
+                _, ext = os.path.splitext(temp_file)
+            except Exception:
+                ext = ''
+
+            # Build candidate path and ensure we don't clobber other files; append counter on collision
+            new_basename = f"{safe_title}{ext}"
+            candidate = os.path.join(temp_path, new_basename)
+            cnt = 1
+            original_basename = new_basename
+            while os.path.exists(candidate) and os.path.abspath(candidate) != os.path.abspath(temp_file):
+                name_only, e = os.path.splitext(original_basename)
+                candidate = os.path.join(temp_path, f"{name_only} ({cnt}){e}")
+                cnt += 1
+
+            rename_ops.append((temp_file, candidate))
         elif processed_metadata.get('title') and processed_metadata['title'].strip():
             # Use existing title metadata and apply book_title_logic
             cleaned_title = book_title_logic(processed_metadata['title'])
@@ -1519,45 +1648,50 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
         # If part_titles option is requested, override title and schedule rename
         if part_titles:
             try:
+                logger.debug(f"part_titles active index={index} temp_file={temp_file} temp_path={temp_path}")
                 # Part number increments every 10 files: 1 for 1-10, 2 for 11-20, etc.
                 part_num = 1 + ((index - 1) // 10)
-                # Use cleaned folder name for the part prefix
-                part_title_str = "{}: Part {}".format(cleaned_folder_name, part_num)
-                updated_metadata['title'] = part_title_str
+                # Use 'Part {part} - {index}' format for part titles (no zero-padding)
+                # and include the cleaned folder name as a prefix in the per-file title
+                # so filesystem metadata/filenames preserve the folder context.
+                # part number increments every 10 files: 1 for 1-10, 2 for 11-20, etc.
+                # For the initial metadata write (before renaming), set a
+                # grouped title like "<Cleaned>: Part {part}" so files in the
+                # same part share a consistent title. The detailed per-file
+                # title (with index) is enforced later after renames.
+                try:
+                    group_prefix = f"{cleaned_folder_name}: " if cleaned_folder_name else ''
+                except Exception:
+                    group_prefix = ''
+                grouped_part_title = f"{group_prefix}Part {part_num}"
+                updated_metadata['title'] = grouped_part_title
 
                 # Sanitize a filename-friendly base from the cleaned folder name
-                def _sanitize_for_filename(n):
+                try:
                     import re
-                    if not n:
-                        return n
-                    s = str(n).strip()
-                    # Replace problematic path chars with dashes
-                    s = re.sub(r'[\\/:\*\?"<>|]+', ' - ', s)
-                    # Remove leading punctuation/underscores/spaces
-                    s = re.sub(r'^[\-\._\s]+', '', s)
-                    # Remove leading numeric prefixes like '01 -', '1 '
-                    s = re.sub(r'^\d{1,3}[\s\-:\._]+', '', s)
-                    # Collapse multiple spaces and separators
-                    s = re.sub(r'\s{2,}', ' ', s).strip()
-                    return s
+                    safe_base = re.sub(r'[\\/:\*\?"<>|]+', ' - ', cleaned_folder_name)
+                    safe_base = re.sub(r'^[\-\._\s]+', '', safe_base)
+                    safe_base = re.sub(r'^\d{1,3}[\s\-:\._]+', '', safe_base)
+                    safe_base = re.sub(r'\s{2,}', ' ', safe_base).strip()
+                except Exception:
+                    # Fallback: very simple safe base
+                    safe_base = str(cleaned_folder_name).strip().replace('/', ' - ').replace('\\', ' - ')
 
-                safe_base = _sanitize_for_filename(cleaned_folder_name)
-                # Keep extension
+                # Keep extension and build candidate
                 _, ext = os.path.splitext(temp_file)
-                # Create unique filename within part by including the index
-                new_basename = "{}: Part {} - {}{}".format(safe_base, part_num, str(index).zfill(3), ext)
-                new_temp_file = os.path.join(temp_path, new_basename)
-
+                # Use Chapter {part} - ### zero-padded format for filename title component
+                new_basename = f"{safe_base}: Part {part_num} - {str(index).zfill(3)}{ext}"
+                candidate = os.path.join(temp_path, new_basename)
                 # If a file with the target name already exists, append a short counter
                 cnt = 1
-                candidate = new_temp_file
+                original_basename = new_basename
                 while os.path.exists(candidate) and os.path.abspath(candidate) != os.path.abspath(temp_file):
-                    name_only, e = os.path.splitext(new_basename)
+                    name_only, e = os.path.splitext(original_basename)
                     candidate = os.path.join(temp_path, f"{name_only} ({cnt}){e}")
                     cnt += 1
 
-                # Schedule rename after metadata writes
                 rename_ops.append((temp_file, candidate))
+                logger.debug("appended rename %s -> %s", temp_file, candidate)
             except Exception:
                 # Non-fatal: continue processing other files
                 pass
@@ -1589,21 +1723,146 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
             pass
         # (Previously had a debug print here for test diagnostics.)
         apply_metadata_to_file(str(temp_file), updated_metadata)
+        # If part_titles is requested, ensure the per-file title was actually written.
+        # Some toolchains or race conditions can cause the title to be missing; attempt one retry.
+        if part_titles:
+            # Determine extension to decide which verification to run
+            try:
+                _, _ext = os.path.splitext(str(temp_file))
+                ext_lower = _ext.lower()
+            except Exception:
+                ext_lower = ''
+
+            # MP4-style verification (©nam)
+            if ext_lower in ['.m4a', '.m4b', '.mp4']:
+                try:
+                    from mutagen.mp4 import MP4
+                    try:
+                        audio_check = MP4(str(temp_file))
+                        tags = getattr(audio_check, 'tags', None)
+                        has_title = False
+                        if tags is not None:
+                            # MP4 atom for title is '\xa9nam'
+                            if '\u00a9nam' in tags or '\xa9nam' in tags:
+                                val = tags.get('\u00a9nam') or tags.get('\xa9nam')
+                                if val:
+                                    has_title = True
+                        if not has_title:
+                            try:
+                                apply_metadata_to_file(str(temp_file), {'title': updated_metadata.get('title')})
+                            except Exception:
+                                logger.debug("Retry apply MP4 title failed for %s", temp_file)
+                    except Exception:
+                        try:
+                            apply_metadata_to_file(str(temp_file), {'title': updated_metadata.get('title')})
+                        except Exception:
+                            logger.debug("Retry apply MP4 title failed for %s (read error)", temp_file)
+                except Exception:
+                    # Mutagen.mp4 may not be available; continue
+                    pass
+
+            # MP3-style verification (ID3 TIT2)
+            if ext_lower == '.mp3':
+                # Try a direct ID3 TIT2 write to be deterministic (bypass generic apply path)
+                try:
+                    from mutagen.id3 import ID3, TIT2, ID3NoHeaderError
+                    try:
+                        # Load existing ID3 tags or create new
+                        try:
+                            id3 = ID3(str(temp_file))
+                        except ID3NoHeaderError:
+                            id3 = ID3()
+
+                        desired_title = updated_metadata.get('title')
+                        if desired_title is not None:
+                            # Normalize to plain string
+                            try:
+                                desired_title_str = str(desired_title)
+                            except Exception:
+                                desired_title_str = repr(desired_title)
+
+                            # Set TIT2 explicitly
+                            try:
+                                id3.delall('TIT2')
+                            except Exception:
+                                pass
+                            try:
+                                id3.add(TIT2(encoding=3, text=desired_title_str))
+                                id3.save(str(temp_file))
+                            except Exception:
+                                # If direct save fails, fall back to generic apply
+                                try:
+                                    apply_metadata_to_file(str(temp_file), {'title': desired_title})
+                                except Exception:
+                                    logger.debug("Direct ID3 write failed and fallback apply failed for %s", temp_file)
+
+                        # Verify the write succeeded
+                        try:
+                            id3_check = ID3(str(temp_file))
+                            if 'TIT2' not in id3_check or not id3_check.getall('TIT2'):
+                                # Retry via generic apply as last resort
+                                try:
+                                    apply_metadata_to_file(str(temp_file), {'title': updated_metadata.get('title')})
+                                except Exception:
+                                    logger.debug("Final retry apply MP3 title failed for %s", temp_file)
+                        except Exception:
+                            # If verify read fails, attempt generic apply
+                            try:
+                                apply_metadata_to_file(str(temp_file), {'title': updated_metadata.get('title')})
+                            except Exception:
+                                logger.debug("Verify/read after ID3 write failed for %s", temp_file)
+                    except Exception:
+                        # If anything goes wrong with ID3 direct path, fallback to generic apply
+                        try:
+                            apply_metadata_to_file(str(temp_file), {'title': updated_metadata.get('title')})
+                        except Exception:
+                            logger.debug("Fallback apply MP3 title failed for %s", temp_file)
+                except Exception:
+                    # Mutagen.id3 may not be available; fallback to generic apply
+                    try:
+                        apply_metadata_to_file(str(temp_file), {'title': updated_metadata.get('title')})
+                    except Exception:
+                        logger.debug("Mutagen.id3 not available and fallback apply failed for %s", temp_file)
     except Exception as e:
-        print("Warning: Failed to update metadata for {}: {}".format(temp_file, e))
+        logger.warning("Failed to update metadata for %s: %s", temp_file, e)
 
     # After writing metadata for each file, perform any scheduled renames
     if rename_ops:
+        try:
+            # Log planned renames for debug visibility
+            logger.debug("rename_ops count=%d", len(rename_ops))
+            for src_old, dst_new in rename_ops:
+                logger.debug("planned rename %s -> %s", src_old, dst_new)
+        except Exception:
+            pass
+
         for src_old, dst_new in rename_ops:
             try:
-                # Only rename if the source exists (it may have been removed or skipped)
-                if os.path.exists(src_old) and not os.path.exists(dst_new):
-                    os.rename(src_old, dst_new)
-            except Exception:
+                exists_src = os.path.exists(src_old)
+                exists_dst = os.path.exists(dst_new)
+                logger.debug("rename check src_exists=%s dst_exists=%s src=%s dst=%s", exists_src, exists_dst, src_old, dst_new)
+                # If the source exists, perform a replace so we explicitly overwrite any existing destination.
+                if exists_src:
+                    try:
+                        # os.replace will atomically replace the destination if it exists
+                        os.replace(src_old, dst_new)
+                        logger.debug("renamed %s -> %s (replaced if existed)", src_old, dst_new)
+                    except Exception as e_replace:
+                        # Fallback: try removing destination then rename
+                        try:
+                            if os.path.exists(dst_new):
+                                os.remove(dst_new)
+                            os.rename(src_old, dst_new)
+                            logger.debug("renamed %s -> %s (removed existing dst)", src_old, dst_new)
+                        except Exception as e2:
+                            logger.debug("rename failed for %s -> %s: %s", src_old, dst_new, e2)
+                else:
+                    logger.debug("skipping rename because source missing %s -> %s", src_old, dst_new)
+            except Exception as e:
                 # Non-fatal; continue with others
-                pass
+                logger.debug("rename failed for %s -> %s: %s", src_old, dst_new, e)
 
-    # Clean up the folder name in temp directory
+    # Clean up the folder name in temp directory (only when not operating in-place)
     cleaned_temp_folder_name = book_title_logic(os.path.basename(temp_path))
     # Additional sanitization to avoid leading punctuation / numeric prefixes
     import re
@@ -1613,12 +1872,184 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
         cleaned_temp_folder_name = re.sub(r'\s{2,}', ' ', cleaned_temp_folder_name).strip()
     new_temp_path = os.path.join(os.path.dirname(temp_path), cleaned_temp_folder_name)
 
-    # Rename the folder if name changed
-    if cleaned_temp_folder_name != os.path.basename(temp_path):
-        os.rename(temp_path, new_temp_path)
-        temp_folder = str(new_temp_path)
+    # Rename the folder if name changed (skip when operating in-place)
+    if not in_place:
+        if cleaned_temp_folder_name != os.path.basename(temp_path):
+            os.rename(temp_path, new_temp_path)
+            temp_folder = str(new_temp_path)
 
-    return temp_folder
+    # If part_titles requested, enforce deterministic per-file title tags after renames
+    if part_titles:
+        try:
+            target_folder = temp_folder if not in_place else temp_path
+            # Find audio files and sort naturally
+            files = []
+            for ext in ('*.mp3', '*.m4a'):
+                files.extend(glob.glob(os.path.join(target_folder, ext)))
+            files = sorted(files, key=natural_sort_key)
+
+            # Compute and write titles deterministically from cleaned folder name and index
+            for idx, fpath in enumerate(files, 1):
+                try:
+                    part_num = 1 + ((idx - 1) // 10)
+                    try:
+                        # Use the cleaned source folder name (the user's original
+                        # album/book title) as the prefix so chapter/title atoms
+                        # reflect the original folder context instead of the
+                        # temporary copy's basename.
+                        prefix = f"{cleaned_folder_name} - " if cleaned_folder_name else ''
+                    except Exception:
+                        prefix = ''
+                    per_file_title = f"{prefix}Part {part_num} - {idx}"
+
+                    _, ext = os.path.splitext(fpath)
+                    ext = ext.lower()
+                    if ext == '.mp3':
+                        try:
+                            from mutagen.id3 import ID3, TIT2, ID3NoHeaderError
+                            try:
+                                id3 = ID3(fpath)
+                            except ID3NoHeaderError:
+                                id3 = ID3()
+                            try:
+                                id3.delall('TIT2')
+                            except Exception:
+                                pass
+                            id3.add(TIT2(encoding=3, text=str(per_file_title)))
+                            id3.save(fpath)
+                        except Exception:
+                            # Fallback to generic apply
+                            try:
+                                apply_metadata_to_file(fpath, {'title': per_file_title})
+                            except Exception:
+                                logger.debug("Failed to write MP3 title for %s", fpath)
+                    else:
+                        # MP4 family
+                        try:
+                            from mutagen.mp4 import MP4
+                            m = MP4(fpath)
+                            m.tags['\u00a9nam'] = [str(per_file_title)]
+                            m.save()
+                        except Exception:
+                            try:
+                                apply_metadata_to_file(fpath, {'title': per_file_title})
+                            except Exception:
+                                logger.debug("Failed to write MP4 title for %s", fpath)
+                except Exception:
+                    logger.debug("Failed to compute/write per-file title for %s", fpath)
+        except Exception:
+            # Non-fatal; continue
+            pass
+
+    # Return the path where metadata was written. If in_place, this is the original folder.
+    return temp_folder if not in_place else temp_path
+
+
+def _author_last_first_to_first_last(name):
+    """Convert a name like "Last, First" into "First Last".
+
+    - Handles simple comma-separated "Last, First Middle" cases by moving
+      the first comma-separated element to the end.
+    - Uses book_title_logic for sensible capitalization when available.
+    """
+    if not name:
+        return name
+    try:
+        s = str(name).strip()
+    except Exception:
+        return name
+
+    # If it contains a comma, assume Last, First [Suffix?]
+    if ',' in s:
+        parts = [p.strip() for p in s.split(',') if p.strip()]
+        if len(parts) >= 2:
+            last = parts[0]
+            first = ' '.join(parts[1:])
+            combined = f"{first} {last}".strip()
+            try:
+                return book_title_logic(combined)
+            except Exception:
+                try:
+                    return combined.title()
+                except Exception:
+                    return combined
+
+    # No comma: just return cleaned/title-cased form
+    try:
+        return book_title_logic(s)
+    except Exception:
+        try:
+            return s.title()
+        except Exception:
+            return s
+
+
+def _maybe_fix_author(name, flag):
+    """If flag is true and name looks like 'Last, First', return fixed name.
+
+    This helper is defensive: the incoming `name` may be a list, bytes,
+    or a mutagen frame-like object. Normalize into a plain string first
+    so the Last, First -> First Last logic is applied reliably.
+    """
+    if not name:
+        return name
+
+    # Normalize common container/wrapper types into a plain string
+    try:
+        val = name
+        # Unwrap single-element lists
+        if isinstance(val, list) and len(val) > 0:
+            val = val[0]
+
+        # If it's bytes, decode sensibly
+        if isinstance(val, (bytes, bytearray)):
+            try:
+                val = val.decode('utf-8')
+            except Exception:
+                try:
+                    val = val.decode('latin-1')
+                except Exception:
+                    val = str(val)
+
+        # Mutagen frames sometimes expose .text or .data
+        if hasattr(val, 'text'):
+            try:
+                t = val.text
+                if isinstance(t, list) and len(t) > 0:
+                    val = t[0]
+                else:
+                    val = t
+            except Exception:
+                try:
+                    val = str(val)
+                except Exception:
+                    pass
+
+        if hasattr(val, 'data') and not isinstance(val, (str, bytes, bytearray)):
+            try:
+                # prefer text-like representation when possible
+                val = val.data
+                if isinstance(val, (bytes, bytearray)):
+                    try:
+                        val = val.decode('utf-8')
+                    except Exception:
+                        val = val.decode('latin-1', errors='ignore')
+            except Exception:
+                pass
+
+        name_str = str(val).strip()
+    except Exception:
+        try:
+            name_str = str(name).strip()
+        except Exception:
+            return name
+
+    if flag:
+        try:
+            return _author_last_first_to_first_last(name_str)
+        except Exception:
+            return name_str
+    return name_str
 
 
 def get_sleep_prevention_command():
@@ -1673,7 +2104,7 @@ def get_sleep_prevention_command():
     return []
 
 
-def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filename', original_source_path=None, chapter_titles=False, series_name=None, temp_copy_path=None):
+def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filename', original_source_path=None, chapter_titles=False, series_name=None, temp_copy_path=None, author_fix=False, cli_author=None, album_names=False):
     """
     Convert a folder of audio files (os.path.join(MP3, M4A)) to a single M4B file with chapters.
 
@@ -1773,51 +2204,128 @@ def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filena
                 # Fallback: estimate 10 minutes per chapter if duration can't be read
                 duration_ms = 600000  # 10 minutes in milliseconds
 
-            # Get chapter title from source file metadata or use filename
-            chapter_title = "Chapter {}".format(i+1)
-            try:
-                source_metadata = extract_metadata_from_file(audio_file)
-                if source_metadata.get('title'):
-                    if chapter_titles:
-                        # Use title directly (already formatted by mutate_metadata)
-                        chapter_title = source_metadata['title']
-                    else:
-                        # Apply book title logic to clean up chapter titles
-                        chapter_title = book_title_logic(source_metadata['title'])
-                else:
-                    # Use filename without extension as fallback
+            # Default chapter title
+            chapter_title = None
+
+            # If chapter_titles mode is requested, keep minimal chapter names for players
+            if chapter_titles:
+                try:
+                    base_for_name = os.path.basename(original_source_path) if original_source_path else os.path.basename(folder_path)
+                    book_name = clean_album_name(base_for_name) or folder_basename
+                except Exception:
+                    book_name = folder_basename
+                try:
+                    import re
+                    book_name = re.sub(r'^Temp-[\w\d\-]*\s*', '', str(book_name), flags=re.IGNORECASE).strip()
+                except Exception:
+                    pass
+                chapter_title = f"Chapter {i+1}"
+            else:
+                # Prefer the embedded title tag (MP4 ©nam or ID3 TIT2) when present
+                try:
+                    a = mutagen.File(audio_file)
+                    if a is not None and getattr(a, 'tags', None):
+                        tags = a.tags
+                        # MP4 atom
+                        if '\u00a9nam' in tags and tags.get('\u00a9nam'):
+                            t = tags.get('\u00a9nam')
+                            chapter_title = t[0] if isinstance(t, (list, tuple)) else t
+                        elif '\xa9nam' in tags and tags.get('\xa9nam'):
+                            t = tags.get('\xa9nam')
+                            chapter_title = t[0] if isinstance(t, (list, tuple)) else t
+                        # ID3 TIT2 frame
+                        elif 'TIT2' in tags and tags.get('TIT2'):
+                            t = tags.get('TIT2')
+                            try:
+                                chapter_title = t.text[0]
+                            except Exception:
+                                chapter_title = str(t)
+                        else:
+                            # Try common textual keys as a last resort
+                            for candidate in ['title', 'TIT2', 'TIT1', 'TPE1']:
+                                if candidate in tags and tags.get(candidate):
+                                    v = tags.get(candidate)
+                                    chapter_title = v[0] if isinstance(v, (list, tuple)) else v
+                                    break
+                    # Normalize to string and sanitize
+                    if chapter_title is not None:
+                        if isinstance(chapter_title, bytes):
+                            try:
+                                chapter_title = chapter_title.decode('utf-8', errors='ignore')
+                            except Exception:
+                                chapter_title = str(chapter_title)
+                        chapter_title = str(chapter_title).strip()
+                        chapter_title = re.sub(r'\.(m4a|m4b|mp3|wav)$', '', chapter_title, flags=re.IGNORECASE)
+                        try:
+                            chapter_title = sanitize_string(chapter_title, replace_underscores=True)
+                        except Exception:
+                            pass
+                except Exception:
+                    chapter_title = None
+
+                # Fallback: attempt to use extracted metadata mapping if direct tags yielded nothing
+                if not chapter_title:
+                    try:
+                        source_metadata = extract_metadata_from_file(audio_file)
+                        if source_metadata.get('title'):
+                            chapter_title = book_title_logic(source_metadata['title'])
+                    except Exception:
+                        chapter_title = None
+
+                # Final fallback to filename stem
+                if not chapter_title:
                     file_stem = os.path.splitext(os.path.basename(audio_file))[0]
-                    if chapter_titles:
-                        # For chapter_titles mode, still use filename as-is
-                        chapter_title = file_stem
-                    else:
-                        # Apply book title logic to clean up filename-based titles too
-                        chapter_title = book_title_logic(file_stem)
-            except Exception as e:
-                # Use filename without extension as final fallback
-                logger.debug("Error extracting title metadata for %s: %s", audio_file, e)
-                file_stem = os.path.splitext(os.path.basename(audio_file))[0]
-                if chapter_titles:
-                    chapter_title = file_stem
-                else:
-                    # Apply book title logic to clean up filename-based titles
                     chapter_title = book_title_logic(file_stem)
 
-            # Write chapter info to metadata file
+            # Ensure a sanitized title string
+            try:
+                chapter_title = sanitize_string(chapter_title, replace_underscores=True)
+            except Exception:
+                try:
+                    chapter_title = str(chapter_title)
+                except Exception:
+                    chapter_title = ''
+
+            # Write chapter metadata
             f.write("\n[CHAPTER]\n")
             f.write("TIMEBASE=1/1000\n")
             f.write("START={}\n".format(current_time))
             f.write("END={}\n".format(current_time + duration_ms))
+
+            # Normalize part/chapter patterns to remove zero-padding in the
+            # written chapter title while preserving any leading prefix.
+            try:
+                import re
+                m = re.search(r'^(?:([^:\-\u2013\u2014]+)[:\-\u2013\u2014]\s*)?(?:Chapter|Part)\s*(\d+)\s*-\s*(\d+)\s*$', chapter_title, flags=re.IGNORECASE)
+                if m:
+                    raw_index = int(m.group(3))
+                    computed_part = 1 + ((raw_index - 1) // 10)
+                    chapter_title = f"Part {computed_part} - {raw_index}"
+            except Exception:
+                pass
+
             f.write("title={}\n".format(chapter_title))
-            
+
             # Collect chapter info for post-processing (convert to seconds)
-            chapters_info.append({
+            ci = {
                 'start': current_time / 1000.0,  # Convert milliseconds to seconds
-                'title': chapter_title
-            })
-            
+                'end': (current_time + duration_ms) / 1000.0,
+                'title': chapter_title,
+                'start_ms': current_time,
+                'end_ms': current_time + duration_ms
+            }
+            if chapter_titles:
+                try:
+                    ci['book_name'] = book_name
+                except Exception:
+                    ci['book_name'] = folder_basename
+            chapters_info.append(ci)
+
             current_time += duration_ms
 
+    # Wrap the ffmpeg invocation and post-processing in a single try/finally to
+    # ensure temporary files are removed even on error. We intentionally let
+    # exceptions propagate after cleanup so callers can detect failures.
     try:
         # Use ffmpeg with concat input and chapter metadata
         import subprocess
@@ -1847,239 +2355,155 @@ def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filena
             str(output_path)
         ]
 
-        # Handle sleep prevention
+        # Handle sleep prevention for different platforms
         import platform
         system = platform.system().lower()
         if system == 'windows':
-            # For Windows, wrap the entire ffmpeg command in PowerShell with sleep prevention
             try:
-                import subprocess
                 result = subprocess.run(['where', 'powershell'], capture_output=True, text=True)
                 if result.returncode == 0:
-                    # Create PowerShell script that prevents sleep during ffmpeg execution
                     ffmpeg_args = ' '.join([f'"{arg}"' if ' ' in arg or '"' in arg else arg for arg in cmd])
-                    powershell_script = f'''
-$code = @"
-using System;
-using System.Runtime.InteropServices;
-public class Power {{
-    [DllImport("kernel32.dll")]
-    public static extern uint SetThreadExecutionState(uint esFlags);
-    public const uint ES_CONTINUOUS = 0x80000000;
-    public const uint ES_SYSTEM_REQUIRED = 0x00000001;
-    public const uint ES_DISPLAY_REQUIRED = 0x00000002;
-}}
-"@;
-Add-Type -TypeDefinition $code;
-[Power]::SetThreadExecutionState([Power]::ES_CONTINUOUS -bor [Power]::ES_SYSTEM_REQUIRED -bor [Power]::ES_DISPLAY_REQUIRED);
-try {{
-    & ffmpeg.exe {ffmpeg_args}
-}} finally {{
-    [Power]::SetThreadExecutionState([Power]::ES_CONTINUOUS);
-}}
-'''
+                    powershell_script = f'''$code = @"using System;using System.Runtime.InteropServices;public class Power {{[DllImport(\"kernel32.dll\")]public static extern uint SetThreadExecutionState(uint esFlags);public const uint ES_CONTINUOUS = 0x80000000;public const uint ES_SYSTEM_REQUIRED = 0x00000001;public const uint ES_DISPLAY_REQUIRED = 0x00000002;}}"@;Add-Type -TypeDefinition $code;[Power]::SetThreadExecutionState([Power]::ES_CONTINUOUS -bor [Power]::ES_SYSTEM_REQUIRED -bor [Power]::ES_DISPLAY_REQUIRED);try {{ & ffmpeg.exe {ffmpeg_args} }} finally {{ [Power]::SetThreadExecutionState([Power]::ES_CONTINUOUS); }}'''
                     cmd = ['powershell', '-ExecutionPolicy', 'Bypass', '-Command', powershell_script]
-                else:
-                    # PowerShell not available, continue without sleep prevention
-                    pass
-            except Exception as e:
-                # Error checking PowerShell, continue without sleep prevention
-                logger.debug("Error checking for PowerShell: %s", e)
+            except Exception:
+                logger.debug("Error checking for PowerShell, continuing without special sleep prevention")
         else:
-            # For macOS/Linux, use the standard prefix approach
             sleep_prevention_cmd = get_sleep_prevention_command()
             if sleep_prevention_cmd:
                 cmd = sleep_prevention_cmd + cmd
 
-        # Initialize progress tracker for M4B conversion
+        # Initialize progress tracker for M4B conversion (optional)
         try:
             from audiobook_p.progress import ProgressTracker
-            # Use total seconds (rounded) for progress tracking when available
             try:
                 total_duration = int(max(1, current_time / 1000.0))
             except Exception:
                 total_duration = 1
             progress = ProgressTracker(total_duration, "Converting to M4B")
             progress.update(0, "Starting conversion...")
-        except ImportError:
-            # Fallback if progress module not available
+        except Exception:
             progress = None
             logger.info("Converting to M4B...")
 
-        # Run the command and stream stderr to update progress in real time
+        # Run ffmpeg and monitor progress
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1, universal_newlines=True)
+        import re
+        time_re = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
         try:
-            # Start ffmpeg process
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1, universal_newlines=True)
-
-            # Parse ffmpeg stderr lines for time=HH:MM:SS.micro to estimate progress
-            import re
-            time_re = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
-
-            # If we don't have a sensible total_duration fallback to 1 to avoid divide-by-zero
-            try:
-                total_secs = float(max(1.0, current_time / 1000.0))
-            except Exception:
-                total_secs = 1.0
-
-            # Read stderr line-by-line
-            if proc.stderr is not None:
-                for raw_line in proc.stderr:
-                    line = raw_line.strip()
-                    # Try to find a time= value
-                    m = time_re.search(line)
-                    if m:
-                        hh = int(m.group(1))
-                        mm = int(m.group(2))
-                        ss = float(m.group(3))
-                        elapsed = hh * 3600 + mm * 60 + ss
-                        # Update progress based on elapsed / total_secs
-                        if progress:
-                            # Cap elapsed at total_secs
-                            cur = int(min(elapsed, total_secs))
-                            progress.set_progress(cur, "Converting: {}s/{:.0f}s".format(int(elapsed), total_secs))
-                    # Optionally, print ffmpeg line in verbose mode or debug
-                    # print(line)
-
-            # Wait for process to finish
-            retcode = proc.wait()
-            if retcode != 0:
-                # Capture output for error reporting (don't keep unused variables)
-                try:
-                    proc.communicate(timeout=2)
-                except Exception as e:
-                    logger.debug("Error communicating with ffmpeg process: %s", e)
-                raise Exception("ffmpeg failed with exit code {}".format(retcode))
-
-            # Update progress to complete
-            if progress:
-                progress.finish("M4B conversion complete")
-            else:
-                logger.info("M4B conversion complete")
-
+            total_secs = float(max(1.0, current_time / 1000.0))
         except Exception:
-            # If something goes wrong, try a non-streaming call to capture the error
-            try:
-                error_output = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
-                raise Exception("ffmpeg failed: {}".format(error_output))
-            except subprocess.CalledProcessError as e2:
-                raise Exception("ffmpeg failed with exit code {}: {}".format(e2.returncode, e2.output))
-            except Exception:
-                # Re-raise original
-                raise
+            total_secs = 1.0
 
-        # Verify the output file was created and has content
+        if proc.stderr is not None:
+            for raw_line in proc.stderr:
+                line = raw_line.strip()
+                m = time_re.search(line)
+                if m and progress:
+                    hh = int(m.group(1)); mm = int(m.group(2)); ss = float(m.group(3))
+                    elapsed = hh * 3600 + mm * 60 + ss
+                    cur = int(min(elapsed, total_secs))
+                    progress.set_progress(cur, "Converting: {}s/{:.0f}s".format(int(elapsed), total_secs))
+
+        retcode = proc.wait()
+        if retcode != 0:
+            try:
+                out = proc.communicate(timeout=2)
+            except Exception:
+                pass
+            raise Exception("ffmpeg failed with exit code {}".format(retcode))
+
+        if progress:
+            progress.finish("M4B conversion complete")
+        else:
+            logger.info("M4B conversion complete")
+
+        # Verify output exists
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
             raise Exception("Output file was not created or is empty")
 
-        # Add chapters to the M4B file using mutagen
+        # Try to add chapters with mutagen
         if chapters_info:
             try:
                 from mutagen.mp4 import MP4, MP4Chapters, Chapter
                 audio = MP4(str(output_path))
-                
-                # Create chapter objects from our collected info
                 chapter_objects = []
                 for chapter in chapters_info:
                     chapter_obj = Chapter(start=chapter['start'], title=chapter['title'])
                     chapter_objects.append(chapter_obj)
-                
-                # Create MP4Chapters and set its internal chapters
-                mp4_chapters = MP4Chapters()
-                mp4_chapters._chapters = chapter_objects
-                
-                # Set the chapters on the MP4 file
+                mp4_chapters = MP4Chapters(); mp4_chapters._chapters = chapter_objects
                 audio.chapters = mp4_chapters
                 audio.save()
                 logger.info("Chapters added to M4B file")
             except Exception as e:
                 logger.warning("Failed to add chapters to M4B: %s", e)
 
-        # Add additional metadata to the M4B file (audiobook-specific tags)
-        # Try to find original source files for better cover art quality
+        # Attempt to locate original source files for cover art, then add metadata
         original_audio_files = None
         try:
-            # If we have an explicit original source path, use it
             if original_source_path and os.path.exists(original_source_path):
-                # Find audio files in the original source path
                 original_files = []
                 for ext in ['*.m4a', '*.mp3']:
                     original_files.extend(glob.glob(os.path.join(original_source_path, ext)))
                 if original_files:
-                    # Sort to match the order of temp files
                     original_files.sort(key=natural_sort_key)
                     original_audio_files = original_files
                     logger.info("Found %d original source files from explicit path", len(original_files))
-            # Fallback: If the folder_path looks like a temp directory (contains "audiobook_copy_"), 
-            # try to find the original files by looking at the source folder structure
             elif "audiobook_copy_" in folder_path:
-                # This is likely a mutated temp folder, try to find original files
-                # Look for files with similar names in the current directory or parent
                 folder_dir = os.path.dirname(folder_path)
                 folder_name = os.path.basename(folder_path)
-                
-                # Try to find a folder with similar audio files in the same directory
                 for item in os.listdir(folder_dir):
                     item_path = os.path.join(folder_dir, item)
                     if os.path.isdir(item_path) and item != folder_name:
-                        # Check if this folder has similar audio files
                         test_files = []
                         for ext in ['*.m4a', '*.mp3']:
                             test_files.extend(glob.glob(os.path.join(item_path, ext)))
                         if test_files:
-                            # Check if filenames are similar (same stem)
                             original_files = []
                             for temp_file in audio_files:
                                 temp_stem = os.path.splitext(os.path.basename(temp_file))[0]
                                 for test_file in test_files:
                                     test_stem = os.path.splitext(os.path.basename(test_file))[0]
                                     if temp_stem == test_stem:
-                                        original_files.append(test_file)
-                                        break
+                                        original_files.append(test_file); break
                             if len(original_files) > 0:
                                 original_audio_files = original_files
                                 logger.info("Found %d original source files for cover art", len(original_files))
                                 break
         except Exception as e:
             logger.warning("Failed to find original source files: %s", e)
-            pass  # If we can't find originals, use the provided files
 
         # Add audiobook metadata to the output file (copy tags, cover art, series)
-        add_audiobook_metadata(str(output_path), audio_files, original_audio_files, series_name=series_name)
+        add_audiobook_metadata(str(output_path), audio_files, original_audio_files, series_name=series_name, chapters_info=chapters_info, chapter_titles=chapter_titles, author_fix=author_fix, cli_author=cli_author, album_names=album_names)
 
         return str(output_path)
-
     finally:
         # Clean up temporary files
         try:
-            os.remove(file_list_path)
+            if os.path.exists(file_list_path):
+                os.remove(file_list_path)
         except Exception as e:
             logger.debug("Failed to remove file_list_path %s: %s", file_list_path, e)
         try:
-            os.remove(metadata_path)
+            if os.path.exists(metadata_path):
+                os.remove(metadata_path)
         except Exception as e:
             logger.debug("Failed to remove metadata_path %s: %s", metadata_path, e)
 
-        # If an explicit temp_copy_path was provided, prefer removing that exact path.
-        # This allows callers (for example mutate->convert flows) to pass the concrete
-        # temporary folder returned by `copy_folder` so we can remove it deterministically.
+        # Remove explicit temp_copy_path when safe
         try:
             if temp_copy_path:
                 try:
                     temp_root = os.path.abspath(tempfile.gettempdir())
                 except Exception:
                     temp_root = None
-
                 try:
                     remove_ok = False
                     if os.path.exists(temp_copy_path):
-                        # If it's under the system temp directory, it's safe to remove
                         if temp_root and os.path.commonpath([os.path.abspath(temp_copy_path), temp_root]) == temp_root:
                             remove_ok = True
-                        # Also allow removal if the basename matches our temp naming conventions
                         base = os.path.basename(temp_copy_path)
                         if base.startswith('temp-') or base.startswith('audiobook_copy_'):
                             remove_ok = True
-
                     if remove_ok and os.path.exists(temp_copy_path):
                         try:
                             shutil.rmtree(temp_copy_path)
@@ -2087,25 +2511,19 @@ try {{
                         except Exception as e:
                             logger.debug("Failed to remove explicit temp_copy_path %s: %s", temp_copy_path, e)
                 except Exception:
-                    # If anything goes wrong here, fall back to heuristic below
                     pass
 
-            # If no explicit temp_copy_path was provided or removal above didn't occur,
-            # fall back to the previous heuristic: remove folder_path when it looks
-            # like a tool-created temp copy under the system temp dir.
+            # Fallback heuristic: remove folder_path when it's under system temp dir
             if not temp_copy_path or not (os.path.exists(temp_copy_path) and base.startswith(('temp-', 'audiobook_copy_'))):
                 try:
                     try:
                         temp_root = os.path.abspath(tempfile.gettempdir())
                     except Exception:
                         temp_root = None
-
-                    # Resolve absolute path for safety
                     try:
                         folder_abspath = os.path.abspath(folder_path)
                     except Exception:
                         folder_abspath = None
-
                     if folder_abspath and temp_root and folder_abspath.startswith(temp_root + os.sep):
                         base2 = os.path.basename(folder_abspath)
                         if base2.startswith('audiobook_copy_') or base2.startswith('temp-'):
@@ -2115,10 +2533,8 @@ try {{
                             except Exception as e:
                                 logger.debug("Failed to remove temporary folder %s: %s", folder_abspath, e)
                 except Exception:
-                    # Don't let cleanup failures surface
                     pass
         except Exception:
-            # Don't let cleanup failures surface
             pass
 
 
@@ -2154,7 +2570,60 @@ def add_chapters_to_m4b(m4b_path, chapters_info):
         return False
 
 
-def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, series_name=None, mp4_class=None, mutagen_file_func=None):
+def ffmpeg_inject_chapters(m4b_path, chapters, timebase=1000):
+    """Create an ffmetadata file and remux it into m4b_path using ffmpeg.
+
+    chapters: iterable of dicts with keys 'start_ms', 'end_ms', 'title'.
+    Returns a dict: {'status': 'ok'|'no_ffmpeg'|'error', 'note': str}
+    """
+    import shutil
+    import tempfile
+    import subprocess
+    import os
+
+    ffmpeg_path = shutil.which('ffmpeg')
+    if not ffmpeg_path:
+        return {'status': 'no_ffmpeg', 'note': 'ffmpeg not found on PATH'}
+
+    meta_fd, meta_path = tempfile.mkstemp(prefix='ffmeta_', suffix='.txt')
+    try:
+        with os.fdopen(meta_fd, 'w', encoding='utf-8') as mfd:
+            mfd.write(';FFMETADATA1\n')
+            for ch in chapters:
+                s_ms = ch.get('start_ms') if ch.get('start_ms') is not None else 0
+                e_ms = ch.get('end_ms') if ch.get('end_ms') is not None else (s_ms + 1000)
+                try:
+                    s_ms = int(round(float(s_ms)))
+                except Exception:
+                    s_ms = 0
+                try:
+                    e_ms = int(round(float(e_ms)))
+                except Exception:
+                    e_ms = s_ms + 1000
+
+                mfd.write('[CHAPTER]\n')
+                mfd.write('TIMEBASE=1/1000\n')
+                mfd.write(f'START={s_ms}\n')
+                mfd.write(f'END={e_ms}\n')
+                title_safe = (ch.get('title') or '').replace('\n', ' ')
+                mfd.write(f'title={title_safe}\n')
+
+        tmp_out = m4b_path + '.tmp.m4b'
+        cmd = [ffmpeg_path, '-y', '-i', m4b_path, '-i', meta_path, '-map_metadata', '1', '-c', 'copy', tmp_out]
+        subprocess.run(cmd, check=True, capture_output=True)
+        os.replace(tmp_out, m4b_path)
+        return {'status': 'ok', 'note': 'created chapters (ffmpeg)'}
+    except Exception as e:
+        return {'status': 'error', 'note': f'ffmpeg chapter injection failed: {e}'}
+    finally:
+        try:
+            if os.path.exists(meta_path):
+                os.remove(meta_path)
+        except Exception:
+            pass
+
+
+def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, series_name=None, mp4_class=None, mutagen_file_func=None, chapters_info=None, chapter_titles=False, author_fix=False, cli_author=None, album_names=False):
     """
     Add audiobook metadata to an existing M4B file.
 
@@ -2297,11 +2766,36 @@ def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, s
             # Prefer source_files[0] for text metadata (these are the post-mutate files)
             first_file = source_files[0]
             first_audio = MutagenFile(first_file)
+            # Detect whether source files include an explicit grouping/series
+            grouping_in_source = False
             try:
-                # Debug: log tag keys at debug level to reduce test noise
-                logger.debug("DBG: first_audio tags keys: %s", list(first_audio.tags.keys()) if first_audio and hasattr(first_audio, 'tags') and first_audio.tags else [])
+                if first_audio and hasattr(first_audio, 'tags') and first_audio.tags:
+                    if '\u00a9grp' in first_audio.tags or '\xa9grp' in first_audio.tags or '----:com.apple.iTunes:SERIES' in first_audio.tags:
+                        grouping_in_source = True
+                    else:
+                        # Check for ID3 TIT1 as grouping on MP3 sources
+                        try:
+                            for ak in list(first_audio.tags.keys()):
+                                if isinstance(ak, str) and ak.upper().startswith('TIT1'):
+                                    grouping_in_source = True
+                                    break
+                        except Exception:
+                            pass
             except Exception:
-                pass
+                grouping_in_source = False
+            # Best-effort introspection of the first source file to help
+            # diagnose missing tag copy issues in integration tests.
+            try:
+                logger.debug("add_audiobook_metadata: first_file=%s, cli_author=%r, author_fix=%r", first_file, cli_author, author_fix)
+                if first_audio and hasattr(first_audio, 'tags') and first_audio.tags:
+                    try:
+                        logger.debug("first_audio.tags.keys() = %s", list(first_audio.tags.keys()))
+                    except Exception:
+                        logger.debug("first_audio.tags present but failed to list keys", exc_info=True)
+                else:
+                    logger.debug("first_audio has no tags or could not be loaded")
+            except Exception:
+                logger.debug("add_audiobook_metadata: failed to inspect first_audio", exc_info=True)
 
             # Determine track value up-front and mark whether it originated from
             # explicit source metadata so later copy/default logic does not
@@ -2497,6 +2991,13 @@ def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, s
                             except Exception:
                                 pass
 
+                            # Respect CLI author_fix: if requested, normalize artist-like fields
+                            try:
+                                if author_fix and desc_key in ('artist', 'album_artist', 'composer'):
+                                    source_value = _maybe_fix_author(source_value, True)
+                            except Exception:
+                                pass
+
                             # Use the utility function to format the value for MP4
                             formatted_value = reformat_tag_for_file_type(desc_key, source_value, 'mp4')
                             # track_number handling logged via tests; avoid noisy prints here
@@ -2583,7 +3084,7 @@ def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, s
                             # Debug trace: log when we set trkn/disk during copy
                             try:
                                 if write_key in ('trkn', 'disk') or (isinstance(decoded_mp4_key, str) and decoded_mp4_key in ('trkn', 'disk')):
-                                    logger.debug("DBG: set %s = %r (from source %s)", write_key, formatted_value, first_file)
+                                    logger.debug("set %s = %r (from source %s)", write_key, formatted_value, first_file)
                             except Exception:
                                 pass
                             # If we just wrote a track/disc tuple, mark it so later
@@ -2592,7 +3093,7 @@ def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, s
                                 if write_key in ('trkn', 'disk') or (isinstance(decoded_mp4_key, str) and decoded_mp4_key in ('trkn', 'disk')):
                                     track_written = True
                                     try:
-                                        logger.debug("DBG: track_written set True after writing %s", write_key)
+                                        logger.debug("track_written set True after writing %s", write_key)
                                     except Exception:
                                         pass
                             except Exception:
@@ -2759,6 +3260,84 @@ def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, s
 
             if not picture_copied:
                 logger.warning("No cover art found in source file or folder")
+            # Final safety: ensure artist/author is present on the final M4B.
+            # Some source->destination copy paths may miss ©ART; explicitly
+            # copy a sensible author-like value from the first source file or
+            # from the CLI-provided author if available.
+            try:
+                src_val = None
+                if first_audio and hasattr(first_audio, 'tags') and first_audio.tags:
+                    # Prefer decoded MP4 atom name (\xa9ART -> '©ART')
+                    try:
+                        decoded_key = '\\xa9ART'.encode('ascii').decode('unicode_escape')
+                    except Exception:
+                        decoded_key = '\u00A9ART'
+
+                    for candidate in (decoded_key, '©ART', 'aART'):
+                        try:
+                            if candidate in first_audio.tags:
+                                raw = first_audio.tags[candidate]
+                                src_val = raw[0] if isinstance(raw, list) and raw else raw
+                                break
+                        except Exception:
+                            continue
+
+                    # Fallback: look for ID3 TPE1 frames (artist)
+                    if not src_val:
+                        try:
+                            for ak in first_audio.tags.keys():
+                                try:
+                                    if isinstance(ak, str) and ak.upper().startswith('TPE1'):
+                                        raw = first_audio.tags[ak]
+                                        src_val = raw[0] if isinstance(raw, list) and raw else raw
+                                        break
+                                except Exception:
+                                    continue
+                        except Exception:
+                            pass
+
+                # If still not found, but the CLI provided an explicit author, use it
+                if not src_val and cli_author:
+                    try:
+                        src_val = cli_author
+                    except Exception:
+                        src_val = None
+
+                # If we now have a source value, write it to common artist atoms
+                if src_val:
+                    try:
+                        if author_fix:
+                            try:
+                                src_val = _maybe_fix_author(src_val, True)
+                            except Exception:
+                                pass
+
+                        try:
+                            formatted = reformat_tag_for_file_type('artist', src_val, 'mp4')
+                        except Exception:
+                            formatted = [str(src_val)]
+
+                        # Write to decoded ©ART and aART when possible
+                        try:
+                            audio.tags[decoded_key] = formatted
+                        except Exception:
+                            try:
+                                audio.tags['\u00A9ART'] = formatted
+                            except Exception:
+                                pass
+                        try:
+                            audio.tags['aART'] = formatted
+                        except Exception:
+                            pass
+
+                        try:
+                            audio.save()
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         except Exception as e:
             logger.warning("Failed to copy metadata to M4B: %s", e)
@@ -2789,9 +3368,196 @@ def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, s
                             audio.tags['----:com.apple.iTunes:SERIES'] = [cleaned.encode('utf-8')]
                     except Exception:
                         pass
-
         except Exception:
             pass
+
+        # If we have a series name (either from CLI or copied grouping), prefer
+        # to write explicit series-related atoms: album (cleaned folder name),
+        # album_sort ("Series - Album"), soal (series), and sonm (title_sort)
+        try:
+            series_value = None
+            # Prefer explicit CLI-provided series_name
+            if series_name:
+                try:
+                    series_value = sanitize_series_name(series_name)
+                except Exception:
+                    series_value = series_name
+
+            # Fall back to copied grouping atom if present
+            if not series_value:
+                try:
+                    grp = audio.tags.get('\xa9grp')
+                    if grp:
+                        series_value = grp[0] if isinstance(grp, list) else grp
+                except Exception:
+                    series_value = None
+
+            # Fall back to freeform SERIES atom
+            if not series_value:
+                try:
+                    ff = audio.tags.get('----:com.apple.iTunes:SERIES')
+                    if ff and len(ff) > 0:
+                        v = ff[0]
+                        # MP4FreeForm or raw bytes: try decode
+                        try:
+                            if isinstance(v, bytes):
+                                series_value = v.decode('utf-8')
+                            else:
+                                # Some MP4FreeForm expose .value or str()
+                                series_value = str(v)
+                        except Exception:
+                            series_value = str(v)
+                except Exception:
+                    pass
+
+            # Final fallback: try to infer series name from folder structure of
+            # the provided source files (grandparent folder for series child).
+            # Use sanitize_series_name to normalize hyphens and spacing into a
+            # natural series representation (e.g., 'Night-Lords' -> 'Night Lords').
+            if not series_value:
+                try:
+                    # Prefer original source files (pre-mutate) when available
+                    lookup_files = original_source_files if original_source_files and len(original_source_files) > 0 else source_files
+                    if lookup_files and len(lookup_files) > 0:
+                        first_guess = lookup_files[0]
+                        gp = os.path.basename(os.path.dirname(os.path.dirname(first_guess)))
+                        if gp:
+                            sv = sanitize_series_name(gp)
+                            if sv:
+                                series_value = sv
+                                # Mark that this series value was inferred from folder structure
+                                series_inferred_from_structure = True
+                except Exception:
+                    pass
+
+            # Determine cleaned_album from original source files.
+            # If the folder name looks like a temporary copy (e.g. 'temp-...','Temp-...','audiobook_copy_...'),
+            # strip that prefix before cleaning so album_sort/©alb do not contain temp prefixes.
+            cleaned_album = None
+            # Default flag for whether series_value was inferred from structure
+            try:
+                series_inferred_from_structure
+            except NameError:
+                series_inferred_from_structure = False
+            if original_source_files or (source_files and len(source_files) > 0):
+                try:
+                    first_src = original_source_files[0] if original_source_files and len(original_source_files) > 0 else source_files[0]
+                    album_folder = os.path.basename(os.path.dirname(first_src))
+                    # Remove common temp-copy prefixes used by copy_folder and mkdtemp heuristics
+                    try:
+                        import re
+                        album_folder = re.sub(r'^(?:temp[-_]?|Temp[-_]?|audiobook_copy[_-]?)[\w\d\-]*\s*', '', album_folder, flags=re.IGNORECASE)
+                    except Exception:
+                        pass
+                    cleaned_album = clean_album_name(album_folder)
+                    # Strip suffix (keep primary part before any ' - ' separators)
+                    try:
+                        primary_album = cleaned_album.split(' - ')[0].strip()
+                        if primary_album:
+                            cleaned_album = primary_album
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            # If we have a cleaned album folder name, ensure the ©alb atom exists
+            # on the final M4B. Respect the album_names flag (which forces overwrite)
+            # but otherwise only set if not already present.
+            try:
+                if cleaned_album:
+                    try:
+                        existing = audio.tags.get('\xa9alb') or audio.tags.get('\u00A9alb') or audio.tags.get('©alb')
+                    except Exception:
+                        existing = None
+
+                    if album_names or not existing:
+                        try:
+                            audio.tags['\xa9alb'] = [cleaned_album]
+                            try:
+                                audio.save()
+                            except Exception:
+                                pass
+                        except Exception:
+                            try:
+                                audio.tags['\u00A9alb'] = [cleaned_album]
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+            # If we found a series value, set album and sorting atoms accordingly
+            if (series_name or series_value) and (original_source_files or (source_files and len(source_files) > 0)):
+                try:
+                    # Set album to cleaned album folder name (child folder)
+                    # If caller requested explicit album names, force the album to cleaned folder name
+                    if album_names and cleaned_album:
+                        audio.tags['\xa9alb'] = [cleaned_album]
+                    else:
+                        audio.tags['\xa9alb'] = [cleaned_album]
+
+                    # Set freeform series to the series value (leave sonm alone)
+                    try:
+                        from mutagen.mp4 import MP4FreeForm
+                        audio.tags['----:com.apple.iTunes:SERIES'] = [MP4FreeForm(str(series_value).encode('utf-8'))]
+                    except Exception:
+                        try:
+                            audio.tags['----:com.apple.iTunes:SERIES'] = [str(series_value).encode('utf-8')]
+                        except Exception:
+                            pass
+
+                    # Persist these changes early
+                    try:
+                        audio.save()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            # If caller explicitly requested album_names, force the ©alb atom to the cleaned folder name
+            try:
+                if album_names and cleaned_album:
+                    audio.tags['\xa9alb'] = [cleaned_album]
+                    try:
+                        audio.save()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Set album_sort (soal) to the cleaned album name.
+            # If a series was provided explicitly (via CLI or present in source tags),
+            # include it as a prefix. If the series value was merely inferred from
+            # folder structure and there was no explicit grouping in the source and
+            # no CLI-provided series_name, prefer to omit the prefix (treat as novel).
+            try:
+                if cleaned_album:
+                    try:
+                        use_series_prefix = False
+                        if series_value:
+                            # Prefer prefix when the series value is explicit or when the user supplied it
+                            if series_name:
+                                use_series_prefix = True
+                            elif grouping_in_source:
+                                use_series_prefix = True
+                            elif not series_inferred_from_structure:
+                                # Series was discovered by tags/freeform earlier
+                                use_series_prefix = True
+                            else:
+                                # Series was inferred from folder structure only; omit prefix for novels
+                                use_series_prefix = False
+
+                        if series_value and use_series_prefix:
+                            audio.tags['soal'] = [f"{series_value} - {cleaned_album}"]
+                        else:
+                            audio.tags['soal'] = [cleaned_album]
+                    except Exception:
+                        audio.tags['soal'] = [cleaned_album]
+                try:
+                    audio.save()
+                except Exception:
+                    pass
+            except Exception:
+                pass
 
             # Ensure album_sort and title_sort are explicitly written.
             try:
@@ -2946,6 +3712,100 @@ def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, s
                             audio.tags = MP4Tags()
                         audio.tags['trkn'] = fa.tags['trkn']
                         audio.save()
+
+                        # Final adjustments: when --chapter-titles was used, set the main title atom
+                        # (©nam / '\xa9nam') to the cleaned first chapter title so the M4B main
+                        # title reflects the chapter naming mode. Also, when --author-fix was
+                        # requested, normalize any artist-like atoms to First Last form and persist
+                        # them explicitly. Finally, ensure START/END chapter boundaries are
+                        # persisted in the container by invoking ffmpeg remux of ffmetadata if
+                        # chapters_info was provided (this guarantees both START and END are stored).
+                        try:
+                            try:
+                                audio = MP4(m4b_path)
+                                if audio.tags is None:
+                                    audio.tags = MP4Tags()
+                            except Exception:
+                                audio = None
+
+                            modified = False
+                            # Set ©nam from first chapter when chapter_titles mode was active
+                            try:
+                                if chapter_titles and chapters_info and len(chapters_info) > 0:
+                                    # Prefer an explicit book_name attached to chapters_info
+                                    first_ch = chapters_info[0]
+                                    book_name = first_ch.get('book_name') or ''
+                                    # Build ©nam as "BookName - Chapter 1" when possible
+                                    try:
+                                        if book_name:
+                                            cleaned_book = book_title_logic(book_name).strip()
+                                            cleaned_first = f"{cleaned_book} - Chapter 1"
+                                        else:
+                                            # Fall back to old behavior: use cleaned first chapter title
+                                            first_title = first_ch.get('title') or ''
+                                            cleaned_first = book_title_logic(first_title).strip() if first_title else first_title
+                                    except Exception:
+                                        cleaned_first = str(first_ch.get('title', '')).strip()
+
+                                    if audio is not None and cleaned_first:
+                                        audio.tags['\xa9nam'] = [cleaned_first]
+                                        modified = True
+                            except Exception:
+                                pass
+
+                            # Normalize artist/album-artist/composer if author_fix requested
+                            try:
+                                if author_fix and audio is not None:
+                                    for art_key in ('\xa9ART', 'aART', 'composer'):
+                                        try:
+                                            if art_key in audio.tags and audio.tags.get(art_key):
+                                                val = audio.tags[art_key]
+                                                if isinstance(val, list) and len(val) > 0:
+                                                    fixed = _maybe_fix_author(val[0], True)
+                                                    audio.tags[art_key] = [fixed]
+                                                    modified = True
+                                        except Exception:
+                                            continue
+                            except Exception:
+                                pass
+
+                            if modified and audio is not None:
+                                try:
+                                    audio.save()
+                                except Exception:
+                                    pass
+
+                            # Ensure START/END chapter boundaries are persisted by remuxing ffmetadata
+                            try:
+                                if chapters_info and len(chapters_info) > 0:
+                                    # Build ffmetadata-friendly list of dicts with start_ms/end_ms/title
+                                    ff_chs = []
+                                    for ch in chapters_info:
+                                        try:
+                                            s_ms = ch.get('start_ms') if ch.get('start_ms') is not None else int(round(float(ch.get('start', 0)) * 1000))
+                                        except Exception:
+                                            s_ms = 0
+                                        try:
+                                            e_ms = ch.get('end_ms') if ch.get('end_ms') is not None else int(round(float(ch.get('end', (ch.get('start', 0) or 0) + 1)) * 1000))
+                                        except Exception:
+                                            e_ms = int(s_ms + 1000)
+                                        ff_chs.append({'start_ms': int(s_ms), 'end_ms': int(e_ms), 'title': ch.get('title') or ''})
+
+                                    # Attempt ffmpeg injection; ignore failure (we still keep mutagen tags)
+                                    try:
+                                        res = ffmpeg_inject_chapters(m4b_path, ff_chs)
+                                        # If ffmpeg succeeded, re-apply mutagen chapters (start/title)
+                                        if res.get('status') == 'ok':
+                                            try:
+                                                add_chapters_to_m4b(m4b_path, chapters_info)
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
                         logger.info("Copied original trkn from %s to %s", first_src, m4b_path)
                     except Exception:
                         pass
@@ -2953,13 +3813,17 @@ def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, s
                 pass
     except Exception:
         pass
-    except Exception:
-        pass
 
     # Final safety: ensure sonm (title_sort) equals the uncleaned filename stem
     try:
-        if source_files and len(source_files) > 0:
+        if original_source_files and len(original_source_files) > 0:
+            first_src = original_source_files[0]
+        elif source_files and len(source_files) > 0:
             first_src = source_files[0]
+        else:
+            first_src = None
+
+        if first_src:
             file_stem = os.path.splitext(os.path.basename(first_src))[0]
             try:
                 audio = MP4(m4b_path)
@@ -2967,9 +3831,89 @@ def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, s
                     audio.tags = MP4Tags()
                 # Always set/override sonm to ensure deterministic title_sort
                 audio.tags['sonm'] = [str(file_stem)]
+                try:
+                    logger.debug("Setting final sonm=%r on %s", audio.tags.get('sonm'), m4b_path)
+                except Exception:
+                    pass
                 audio.save()
             except Exception:
                 pass
+    except Exception:
+        pass
+
+    # Aggressive normalization pass: if author_fix requested, scan all MP4
+    # tag keys that look like artist/author fields and convert any value that
+    # appears to be in 'Last, First' form (contains a comma) to 'First Last'.
+    try:
+        if author_fix:
+            from mutagen.mp4 import MP4, MP4Tags, MP4FreeForm
+            audio = MP4(m4b_path)
+            if audio.tags is None:
+                audio.tags = MP4Tags()
+            # Explicitly normalize the common MP4 author-like keys to avoid
+            # missing targets due to atom naming edge cases.
+            explicit_keys = ['\xa9ART', 'aART', '\xa9wrt']
+            modified = False
+            for k in explicit_keys:
+                try:
+                    if k in audio.tags and audio.tags.get(k):
+                        v = audio.tags.get(k)
+                        candidate = v[0] if isinstance(v, list) and len(v) > 0 else v
+                        # Unwrap MP4FreeForm/bytes if present
+                        # Unwrap various container types into a plain string
+                        try:
+                            # MP4FreeForm and similar may expose .value or .data
+                            if hasattr(candidate, 'value'):
+                                candidate = candidate.value
+                        except Exception:
+                            pass
+                        try:
+                            if hasattr(candidate, 'data'):
+                                candidate = candidate.data
+                        except Exception:
+                            pass
+
+                        # Decode bytes to string
+                        if isinstance(candidate, (bytes, bytearray)):
+                            try:
+                                candidate = candidate.decode('utf-8')
+                            except Exception:
+                                try:
+                                    candidate = candidate.decode('latin-1', errors='ignore')
+                                except Exception:
+                                    candidate = str(candidate)
+
+                        # If it's a list (nested), pick first element and repeat decode
+                        if isinstance(candidate, list) and len(candidate) > 0:
+                            candidate = candidate[0]
+
+                        # Final string coercion
+                        try:
+                            cand_str = str(candidate).strip()
+                        except Exception:
+                            cand_str = None
+
+                        if isinstance(cand_str, str) and ',' in cand_str:
+                            fixed = _maybe_fix_author(cand_str, True)
+                            if fixed and fixed != cand_str:
+                                try:
+                                    audio.tags[k] = [fixed]
+                                    modified = True
+                                except Exception:
+                                    try:
+                                        audio.tags[k] = [fixed.encode('utf-8')]
+                                        modified = True
+                                    except Exception:
+                                        pass
+                except Exception:
+                    continue
+
+            if modified:
+                try:
+                    audio.save()
+                    logger.info('Applied explicit author_fix normalization to %s', m4b_path)
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -2996,6 +3940,107 @@ def add_audiobook_metadata(m4b_path, source_files, original_source_files=None, s
                 logger.debug("Failed to set default trkn on %s", m4b_path, exc_info=True)
     except Exception:
         logger.debug("Failed to set trkn on %s", m4b_path, exc_info=True)
+
+    # Ensure ©nam (main title) reflects the cleaned first chapter title when
+    # chapter_titles mode was active. Do this unconditionally if chapters_info
+    # was provided so the final M4B has the main title atom set for players.
+    try:
+        if chapter_titles and chapters_info and len(chapters_info) > 0:
+            first_ch = chapters_info[0]
+            book_name = first_ch.get('book_name') or ''
+            try:
+                if book_name:
+                    cleaned_book = book_title_logic(book_name).strip()
+                    cleaned_first = f"{cleaned_book} - Chapter 1"
+                else:
+                    first_title = first_ch.get('title') or ''
+                    cleaned_first = book_title_logic(first_title).strip() if first_title else first_title
+            except Exception:
+                cleaned_first = str(first_ch.get('title', '')).strip()
+
+            if cleaned_first:
+                try:
+                    from mutagen.mp4 import MP4, MP4Tags
+                    audio = MP4(m4b_path)
+                    if audio.tags is None:
+                        audio.tags = MP4Tags()
+                    audio.tags['\xa9nam'] = [cleaned_first]
+                    audio.save()
+                    logger.info("Set ©nam from first chapter title: %s", cleaned_first)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # As a final safety-net, ensure author-like atoms are normalized when
+    # author_fix was requested. Do this unconditionally here to catch any
+    # earlier code-paths that may have missed normalization.
+    try:
+        if author_fix:
+            from mutagen.mp4 import MP4, MP4Tags
+            audio = MP4(m4b_path)
+            if audio.tags is None:
+                audio.tags = MP4Tags()
+
+            modified = False
+            for art_key in ('\xa9ART', 'aART', '\xa9wrt'):
+                try:
+                    if art_key in audio.tags and audio.tags.get(art_key):
+                        val = audio.tags[art_key]
+                        if isinstance(val, list) and len(val) > 0:
+                            fixed = _maybe_fix_author(val[0], True)
+                            # Only write if changed
+                            if fixed and fixed != val[0]:
+                                audio.tags[art_key] = [fixed]
+                                modified = True
+                except Exception:
+                    continue
+
+            if modified:
+                try:
+                    audio.save()
+                    logger.info("Applied final author_fix normalization to %s", m4b_path)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Definitive final normalization: run one more pass after everything
+    # above to ensure no later write reintroduced 'Last, First' values.
+    try:
+        if author_fix:
+            from mutagen.mp4 import MP4, MP4Tags
+            audio = MP4(m4b_path)
+            if audio.tags is None:
+                audio.tags = MP4Tags()
+
+            modified = False
+            # Iterate over all possible artist-like keys and normalize any value that
+            # appears to be in 'Last, First' form (contains a comma).
+            for art_key in list(audio.tags.keys()):
+                try:
+                    if art_key in ('\xa9ART', 'aART', '\xa9wrt') or art_key.lower().endswith('art'):
+                        raw = audio.tags.get(art_key)
+                        if not raw:
+                            continue
+                        # Use _maybe_fix_author which handles all unwrapping internally
+                        fixed = _maybe_fix_author(raw, True)
+                        print(f'Definitive normalization for {m4b_path}: art_key={art_key!r}, raw={raw!r}, fixed={fixed!r}')
+                        if fixed and fixed != raw:
+                            audio.tags[art_key] = [fixed]
+                            modified = True
+                except Exception:
+                    continue
+
+            print(f'Definitive normalization for {m4b_path}: modified={modified!r}')
+            if modified:
+                try:
+                    audio.save()
+                    logger.info('Applied definitive final normalization to %s', m4b_path)
+                except Exception:
+                    logger.debug('Failed to save definitive normalization for %s', m4b_path, exc_info=True)
+    except Exception:
+        pass
 
 
 def move_to_destination(source_path, destination_path, folder_type):
@@ -3136,17 +4181,15 @@ def cmd_convert(args, original_source_path=None):
                 logger.info("Dependencies check passed")
         except Exception as e:
             if logger:
-                logger.error("Dependency check failed: {}".format(e))
+                logger.error("Dependency check failed: %s", e)
             else:
-                print("Warning: {}".format(e))
+                logger.warning("Dependency check failed: %s", e)
         
         # Validate source path
         if not os.path.isdir(source_path):
             error_msg = "Error: Source must be a directory: {}".format(source_path)
-            if logger:
-                logger.error(error_msg)
-            else:
-                print(error_msg)
+            # Always log via module logger to ensure output is captured
+            logging.getLogger(__name__).error(error_msg)
             return
         
         # Enhanced folder validation if available
@@ -3171,12 +4214,14 @@ def cmd_convert(args, original_source_path=None):
             if logger:
                 logger.error(error_msg)
             else:
-                print(error_msg)
+                logger.error(error_msg)
             return
 
-        # If output_path is a directory, generate filename from source folder name
+        # If output_path is a directory, generate filename from original source folder name
         if os.path.isdir(output_path):
-            source_folder_name = os.path.basename(source_path.rstrip('/\\'))
+            # Prefer the original source folder name when available (mutate-convert passes it as original_source_path)
+            src_for_name = original_source_path if original_source_path else source_path
+            source_folder_name = os.path.basename(src_for_name.rstrip('/\\'))
 
             # Sanitize the folder name for use as a filename:
             # - Remove leading/trailing whitespace
@@ -3207,10 +4252,7 @@ def cmd_convert(args, original_source_path=None):
                 final_output_path = validate_output_path(final_output_path)
         except Exception as e:
             error_msg = "Output validation failed: {}".format(e)
-            if logger:
-                logger.error(error_msg)
-            else:
-                print(error_msg)
+            logging.getLogger(__name__).error(error_msg)
             return
 
         # Show processing estimate if available
@@ -3233,7 +4275,7 @@ def cmd_convert(args, original_source_path=None):
         def convert_operation():
             # Pass the folder being converted as temp_copy_path so cleanup can remove
             # the exact folder we created during mutate/convert flows.
-            return convert_folder_to_m4b(str(source_path), str(final_output_path), config, args.sort_by, original_source_path, getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), temp_copy_path=str(source_path))
+            return convert_folder_to_m4b(str(source_path), str(final_output_path), config, args.sort_by, original_source_path, getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), temp_copy_path=str(source_path), author_fix=getattr(args, 'author_fix', False), cli_author=getattr(args, 'author_name', None), album_names=getattr(args, 'album_names', False))
         
         if logger:
             m4b_path = safe_operation("M4B Conversion", convert_operation)
@@ -3248,7 +4290,10 @@ def cmd_convert(args, original_source_path=None):
                 original_source_path,
                 chapter_titles=getattr(args, 'chapter_titles', False),
                 series_name=getattr(args, 'series_name', None),
-                temp_copy_path=str(source_path)
+                temp_copy_path=str(source_path),
+                author_fix=getattr(args, 'author_fix', False),
+                cli_author=getattr(args, 'author_name', None),
+                album_names=getattr(args, 'album_names', False)
             )
 
         # Display results
@@ -3273,14 +4318,11 @@ def cmd_convert(args, original_source_path=None):
             except Exception:
                 pass
         
-        print(json.dumps(result, indent=2))
+        logger.info(json.dumps(result, indent=2))
 
     except Exception as e:
         error_msg = "Error: {}".format(e)
-        if logger:
-            logger.error(error_msg)
-        else:
-            print(error_msg)
+        logging.getLogger(__name__).error(error_msg)
 
 
 def cmd_extract(args):
@@ -3291,7 +4333,7 @@ def cmd_extract(args):
         if os.path.isfile(source_path):
             # Process single file
             if os.path.splitext(source_path)[1].lower() not in ['.m4a', '.mp3', '.m4b']:
-                print("File is not an audio file: {}".format(source_path))
+                logging.getLogger(__name__).error("File is not an audio file: {}".format(source_path))
                 return
 
             metadata = extract_metadata_from_file(str(source_path))
@@ -3315,7 +4357,7 @@ def cmd_extract(args):
                 "file": str(source_path),
                 "metadata": serializable_metadata
             }
-            print(json.dumps(result, indent=2))
+            logger.info(json.dumps(result, indent=2))
 
         elif os.path.isdir(source_path):
             # Check if this folder has individual audio files
@@ -3332,7 +4374,8 @@ def cmd_extract(args):
             if has_individual_files and not has_subfolders:
                 # Simple novel folder
                 results = extract_metadata_from_folder(str(source_path), "novel")
-                print(json.dumps(results, indent=2))
+                # Log JSON output instead of printing to stdout
+                logging.getLogger(__name__).info(json.dumps(results, indent=2))
             elif has_subfolders:
                 # Could be series or batch - use batch_verify to analyze
                 if batch_verify:
@@ -3355,7 +4398,7 @@ def cmd_extract(args):
                                             "error": str(e)
                                         })
 
-                            print(json.dumps(all_results, indent=2))
+                            logger.info(json.dumps(all_results, indent=2))
                             return
                     except Exception:
                         pass
@@ -3380,7 +4423,7 @@ def cmd_extract(args):
                                                 "error": str(e)
                                             })
                             if all_results:
-                                print(json.dumps(all_results, indent=2))
+                                logger.info(json.dumps(all_results, indent=2))
                                 return
                     except Exception:
                         pass
@@ -3390,7 +4433,624 @@ def cmd_extract(args):
                 raise ValueError("Folder {} contains no audio files".format(source_path))
 
     except Exception as e:
-        print("Error: {}".format(e))
+        logger.error("Error: %s", e)
+
+
+def cmd_change(args):
+    """Change metadata on one or more audio files or a folder of audio files.
+
+    Supports mp3, m4a, and m4b files. If a folder is provided, all audio files
+    in the folder will be updated. For folders, use --chapter-title to supply
+    a list of titles that will be mapped to files in natural filename order.
+    """
+    path = args.path
+
+    # Validate input path
+    if not os.path.exists(path):
+        logger.error("Error: Path does not exist: %s", path)
+        return
+
+    # Determine list of files to operate on
+    def _is_audio(p):
+        ext = os.path.splitext(p)[1].lower()
+        return ext in ('.mp3', '.m4a', '.m4b')
+
+    targets = []
+    if os.path.isdir(path):
+        # collect audio files in directory
+        for ext in ['*.m4a', '*.mp3', '*.m4b']:
+            targets.extend(glob.glob(os.path.join(path, ext)))
+        targets = sorted(set(targets), key=natural_sort_key)
+        if not targets:
+            logger.error("Error: No audio files found in folder: %s", path)
+            return
+    else:
+        # Single file provided
+        if not _is_audio(path):
+            logger.error("Error: Unsupported file type: %s", path)
+            return
+        targets = [path]
+
+    # Read chapter titles file if provided
+    def _read_chapter_file(path):
+        """Read chapter definitions from a file.
+
+        Supported formats:
+        - JSON array of strings: ["Title1", "Title2"]
+        - JSON array of objects: [{"start":"00:00:00","end":"00:05:00","title":"Chapter 1"}, ...]
+        - ffmetadata file (starts with ;FFMETADATA1) with [CHAPTER] sections
+        - Plain text: one title per line
+        Returns list of items: either strings (titles) or dicts with keys start_ms,end_ms,title
+        """
+        import json
+        if not os.path.exists(path):
+            raise ValueError(f"Chapter titles file not found: {path}")
+
+        text = None
+        with open(path, 'r', encoding='utf-8') as fh:
+            text = fh.read()
+
+        # Try JSON first
+        try:
+            obj = json.loads(text)
+            results = []
+            if isinstance(obj, list):
+                for item in obj:
+                    if isinstance(item, str):
+                        results.append(item)
+                    elif isinstance(item, dict):
+                        # normalize start/end if present; accept strings
+                        d = dict(item)
+                        results.append(d)
+                return results
+        except Exception:
+            pass
+
+        # ffmetadata detection
+        if text.startswith(';FFMETADATA1'):
+            # crude parser: split by [CHAPTER] sections
+            res = []
+            parts = text.split('[CHAPTER]')
+            for part in parts[1:]:
+                lines = [l.strip() for l in part.splitlines() if l.strip()]
+                data = {}
+                for ln in lines:
+                    if '=' in ln:
+                        k, v = ln.split('=', 1)
+                        data[k.strip().lower()] = v.strip()
+                # expect TIMEBASE, START, END, title
+                start = data.get('start')
+                end = data.get('end')
+                title = data.get('title')
+                try:
+                    start_ms = int(start) if start is not None else None
+                except Exception:
+                    start_ms = None
+                try:
+                    end_ms = int(end) if end is not None else None
+                except Exception:
+                    end_ms = None
+                res.append({'start_ms': start_ms, 'end_ms': end_ms, 'title': title})
+            return res
+
+        # Plain text fallback
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        return lines
+
+    chap_titles = None
+    chap_file = getattr(args, 'chapter_titles_file', None)
+    # Backwards compatibility: accept legacy args.chapter_titles set by tests or callers
+    if not chap_file and hasattr(args, 'chapter_titles'):
+        chap_titles = getattr(args, 'chapter_titles')
+    if chap_file:
+        try:
+            chap_titles = _read_chapter_file(chap_file)
+        except Exception as e:
+            logger.error("Error reading chapter titles file: %s", e)
+            return
+    if chap_titles:
+        # If operating on a folder, require one title per file.
+        if os.path.isdir(path):
+            if len(targets) != len(chap_titles):
+                logger.error("Error: --chapter-titles-file provided %d titles but %d files found", len(chap_titles), len(targets))
+                return
+
+    # Normalize common shorthand chapter inputs like 'ch1', 'ch 1', 'chapter1' -> 'Chapter 1'
+    def _normalize_chapter_title(s):
+        if not s:
+            return s
+        try:
+            st = str(s).strip()
+        except Exception:
+            return s
+
+        import re
+        # Match forms like: ch1, ch 1, chapter1, ch1 slowly
+        m = re.match(r'^(?:ch|c|chapter)\s*[-\.:]?\s*(\d+)(?:\s+(.+))?$', st, re.IGNORECASE)
+        if m:
+            try:
+                n = int(m.group(1))
+                suffix = m.group(2)
+                if suffix:
+                    try:
+                        suffix_clean = book_title_logic(suffix.strip())
+                    except Exception:
+                        suffix_clean = suffix.strip()
+                    return f"Chapter {n} {suffix_clean}"
+                return f"Chapter {n}"
+            except Exception:
+                pass
+
+        # If it's like '1' or '#1' or '1 something', convert to 'Chapter 1 [suffix]'
+        m2 = re.match(r'^[#]?(\d+)(?:\s+(.+))?$', st)
+        if m2:
+            try:
+                n = int(m2.group(1))
+                suffix = m2.group(2)
+                if suffix:
+                    try:
+                        suffix_clean = book_title_logic(suffix.strip())
+                    except Exception:
+                        suffix_clean = suffix.strip()
+                    return f"Chapter {n} {suffix_clean}"
+                return f"Chapter {n}"
+            except Exception:
+                pass
+
+        # If it already seems like 'Chapter X ...', return cleaned title
+        if st.lower().startswith('chapter'):
+            try:
+                return book_title_logic(st)
+            except Exception:
+                return st
+
+        # Fallback to book_title_logic for other normalization
+        try:
+            return book_title_logic(st)
+        except Exception:
+            return st
+
+    # Flatten chap_titles (nargs may produce a list) and normalize shorthand like 'ch1'
+    if chap_titles:
+        # If user passed multiple --chapter-titles flags previously, chap_titles could be nested
+        if any(isinstance(x, (list, tuple)) for x in chap_titles):
+            flat = []
+            for item in chap_titles:
+                if isinstance(item, (list, tuple)):
+                    flat.extend(item)
+                else:
+                    flat.append(item)
+            chap_titles = flat
+
+        # Normalize string entries immediately (e.g., ch1 -> Chapter 1).
+        # Also attempt to parse timed-spec strings (e.g. "00:00:00-00:05:00:Title")
+        # into dicts with start_ms/end_ms/title using the chapters parser.
+        try:
+            from audiobook_p.chapters import parse_chapter_spec
+        except Exception:
+            parse_chapter_spec = None
+
+        normed = []
+        for x in chap_titles:
+            # If it's a dict, normalize its title if present and keep as-is;
+            # later code will handle 'start'/'start_ms' keys.
+            if isinstance(x, dict):
+                d = dict(x)
+                if 'title' in d and isinstance(d['title'], str):
+                    d['title'] = _normalize_chapter_title(d['title'])
+                normed.append(d)
+                continue
+
+            # Strings: try to parse timed spec if parser available
+            if isinstance(x, str) and parse_chapter_spec:
+                try:
+                    parsed = parse_chapter_spec(x)
+                except Exception:
+                    parsed = None
+                if parsed and (parsed.get('start_s') is not None or parsed.get('end_s') is not None):
+                    # Convert seconds to milliseconds and normalize title
+                    start_ms = None if parsed.get('start_s') is None else int(round(parsed.get('start_s') * 1000))
+                    end_ms = None if parsed.get('end_s') is None else int(round(parsed.get('end_s') * 1000))
+                    title_norm = _normalize_chapter_title(parsed.get('title')) if parsed.get('title') else None
+                    normed.append({'start_ms': start_ms, 'end_ms': end_ms, 'title': title_norm})
+                    continue
+
+            # Fallback: treat as a plain title and normalize shorthand
+            if isinstance(x, str):
+                normed.append(_normalize_chapter_title(x))
+            else:
+                normed.append(x)
+
+        chap_titles = normed
+
+    # For .m4b files we can change embedded chapter titles using --chapter-titles
+    change_titles = chap_titles if chap_titles else None
+
+    # Helper: parse time strings like HH:MM:SS or MM:SS or seconds to milliseconds
+    def _time_to_ms(t):
+        if t is None:
+            return None
+        # Already int/float representing ms
+        if isinstance(t, int):
+            return t
+        if isinstance(t, float):
+            # assume seconds
+            return int(round(t * 1000))
+        s = str(t).strip()
+        # If purely numeric, treat as seconds
+        try:
+            if '.' in s or s.isdigit():
+                # numeric string -> seconds
+                return int(round(float(s) * 1000))
+        except Exception:
+            pass
+        # If contains colons, parse H:M:S
+        try:
+            parts = [p for p in s.split(':') if p != '']
+            parts = [float(p) for p in parts]
+            # rightmost is seconds, next is minutes, then hours
+            ms = 0
+            if len(parts) == 1:
+                ms = int(round(parts[0] * 1000))
+            elif len(parts) == 2:
+                ms = int(round((parts[0] * 60 + parts[1]) * 1000))
+            elif len(parts) >= 3:
+                h = parts[-3]
+                m = parts[-2]
+                ssec = parts[-1]
+                ms = int(round((h * 3600 + m * 60 + ssec) * 1000))
+            return ms
+        except Exception:
+            return None
+
+    # Build base metadata updates from args
+    # Cleaning helper
+    def _clean(s):
+        try:
+            return book_title_logic(s).strip()
+        except Exception:
+            return str(s).strip()
+
+    base_updates = {}
+    if args.album is not None:
+        base_updates['album'] = _clean(args.album)
+    if args.album_sort is not None:
+        base_updates['album_sort'] = _clean(args.album_sort)
+    if args.author is not None:
+        # Respect --author-fix flag: if set, convert "Last, First" -> "First Last"
+        try:
+            author_val = _maybe_fix_author(getattr(args, 'author', None), getattr(args, 'author_fix', False))
+        except Exception:
+            author_val = getattr(args, 'author', None)
+        base_updates['artist'] = _clean(author_val)
+    if args.narrator is not None:
+        base_updates['composer'] = _clean(args.narrator)
+    if args.series is not None:
+        base_updates['grouping'] = _clean(args.series)
+    if args.genre is not None:
+        base_updates['genre'] = _clean(args.genre)
+    if args.year is not None:
+        # store as number/string depending on mapping expectations
+        base_updates['year'] = int(args.year)
+    if args.title is not None:
+        # For m4b files, the user asked to error on title changes
+        base_updates['_requested_title'] = args.title
+
+    results = []
+    for i, f in enumerate(targets):
+        try:
+            ext = os.path.splitext(f)[1].lower()
+
+            # If title requested and file is .m4b, error as requested
+            if 'title' in base_updates or '_requested_title' in base_updates:
+                requested_title = base_updates.get('title') or base_updates.get('_requested_title')
+                if ext == '.m4b' and requested_title:
+                    logging.getLogger(__name__).error(f"Error: cannot set --title on .m4b file: {f}")
+                    results.append({'file': f, 'status': 'error', 'error': 'title not allowed for m4b'})
+                    continue
+
+            # Build per-file metadata updates
+            upd = {}
+            # Start with base updates (excluding reserved key)
+            for k, v in base_updates.items():
+                if k == '_requested_title':
+                    continue
+                upd[k] = v
+
+            # Apply chapter-titles mapping if provided (folder mode) for per-file titles
+            if chap_titles:
+                # Normalize shorthand like ch1 -> Chapter 1, then apply cleaning
+                upd['title'] = _clean(_normalize_chapter_title(chap_titles[i]))
+            else:
+                # If a single title was provided, apply to all non-m4b files (unless error above)
+                if args.title is not None and ext != '.m4b':
+                    upd['title'] = _clean(args.title)
+            # If the file is an M4B and chapter-titles-file was provided for single-file m4b, update embedded chapters
+            if ext == '.m4b' and len(targets) == 1 and change_titles:
+                try:
+                    # Load MP4 and update chapters
+                    from mutagen.mp4 import MP4, MP4Chapters, Chapter
+                    mp4 = MP4(f)
+                    existing_chapters = []
+                    try:
+                        if hasattr(mp4, 'chapters') and mp4.chapters is not None:
+                            for ch in mp4.chapters:
+                                # MP4Chapters yields Chapter objects with .start and .title
+                                existing_chapters.append(ch)
+                    except Exception:
+                        # Older mutagen stores chapters differently; attempt to read via mp4.chapters._chapters
+                        try:
+                            existing_chapters = list(mp4.chapters._chapters)
+                        except Exception:
+                            existing_chapters = []
+                    # Detect if user provided timed entries (dicts) in change_titles
+                    timed_mode = any(isinstance(x, dict) for x in change_titles)
+
+                    if timed_mode:
+                        # Build new chapters from the provided dicts (start_ms/end_ms/title)
+                        new_ch_objs = []
+                        # Normalize entries into dicts with start_ms, end_ms, title
+                        parsed = []
+                        for item in change_titles:
+                            if not isinstance(item, dict):
+                                # plain title only -> keep title and no times
+                                parsed.append({'start_ms': None, 'end_ms': None, 'title': str(item)})
+                                continue
+                            d = dict(item)
+                            start_ms = None
+                            end_ms = None
+                            if 'start_ms' in d:
+                                start_ms = _time_to_ms(d.get('start_ms'))
+                            elif 'start' in d:
+                                start_ms = _time_to_ms(d.get('start'))
+                            if 'end_ms' in d:
+                                end_ms = _time_to_ms(d.get('end_ms'))
+                            elif 'end' in d:
+                                end_ms = _time_to_ms(d.get('end'))
+                            parsed.append({'start_ms': start_ms, 'end_ms': end_ms, 'title': d.get('title')})
+
+                        # If starts are missing, attempt to infer by spacing across duration
+                        try:
+                            duration_ms = int(round(float(mp4.info.length) * 1000)) if hasattr(mp4, 'info') and mp4.info and getattr(mp4.info, 'length', None) else None
+                        except Exception:
+                            duration_ms = None
+
+                        # Fill missing starts by distributing evenly where necessary
+                        # First, collect explicit starts positions
+                        explicit_starts = [p['start_ms'] for p in parsed if p['start_ms'] is not None]
+                        if (not explicit_starts) and duration_ms and len(parsed) > 0:
+                            # evenly space
+                            num = len(parsed)
+                            for idx, p in enumerate(parsed):
+                                p['start_ms'] = int(round((duration_ms * idx) / float(num)))
+
+                        # Infer end_ms where missing (next start or duration)
+                        for idx, p in enumerate(parsed):
+                            if p['end_ms'] is None:
+                                if idx + 1 < len(parsed) and parsed[idx+1].get('start_ms') is not None:
+                                    p['end_ms'] = parsed[idx+1]['start_ms']
+                                else:
+                                    p['end_ms'] = duration_ms if duration_ms is not None else (p['start_ms'] + 1000 if p['start_ms'] is not None else None)
+
+                        # Validate ordering and non-overlap
+                        last_end = -1
+                        for p in parsed:
+                            s = p['start_ms']
+                            e = p['end_ms']
+                            if s is None:
+                                logger.error("Error: chapter missing start time: %s", p)
+                                results.append({'file': f, 'status': 'error', 'error': 'missing start time'})
+                                raise ValueError('missing start time')
+                            if e is not None and e <= s:
+                                logger.error("Error: chapter end <= start: %s", p)
+                                results.append({'file': f, 'status': 'error', 'error': 'invalid chapter times'})
+                                raise ValueError('invalid chapter times')
+                            if last_end != -1 and s < last_end:
+                                logger.error("Error: chapter start overlaps previous: %s", p)
+                                results.append({'file': f, 'status': 'error', 'error': 'chapter overlap'})
+                                raise ValueError('chapter overlap')
+                            last_end = e if e is not None else s
+
+                        # Create Chapter objects
+                        for p in parsed:
+                            title = _clean(p.get('title') or '')
+                            s_ms = p.get('start_ms')
+                            try:
+                                new_ch = Chapter(start=s_ms, title=title)
+                            except Exception:
+                                try:
+                                    new_ch = Chapter(start=(s_ms / 1000.0 if s_ms is not None else 0), title=title)
+                                except Exception:
+                                    new_ch = type('C', (), {})()
+                                    setattr(new_ch, 'start', s_ms)
+                                    setattr(new_ch, 'title', title)
+                            new_ch_objs.append(new_ch)
+
+                        # Assign and save, reusing ffmpeg fallback logic
+                        try:
+                            mp4_chapters = MP4Chapters()
+                            mp4_chapters._chapters = new_ch_objs
+                            mp4.chapters = mp4_chapters
+                            mp4.save()
+                            # verify persistence
+                            mp4_reload = MP4(f)
+                            if hasattr(mp4_reload, 'chapters') and mp4_reload.chapters:
+                                results.append({'file': f, 'status': 'ok'})
+                            else:
+                                # Fall back to ffmpeg injection using helper
+                                try:
+                                    ff_res = ffmpeg_inject_chapters(f, parsed)
+                                    if ff_res.get('status') == 'ok':
+                                        results.append({'file': f, 'status': 'ok', 'note': ff_res.get('note')})
+                                    elif ff_res.get('status') == 'no_ffmpeg':
+                                        results.append({'file': f, 'status': 'ok', 'note': 'created chapters (in-memory only)'})
+                                    else:
+                                        results.append({'file': f, 'status': 'error', 'error': ff_res.get('note')})
+                                except Exception as e_meta:
+                                    results.append({'file': f, 'status': 'error', 'error': f'ffmpeg chapter injection failed: {e_meta}'})
+                        except Exception as e:
+                            results.append({'file': f, 'status': 'error', 'error': str(e)})
+                        # done timed_mode processing for this file
+                        continue
+
+                    if not existing_chapters:
+                        # Attempt to create chapters if the MP4 has no chapters but the
+                        # user provided --chapter-titles. Use the file duration to
+                        # space chapters evenly. If we can't determine duration,
+                        # fall back to previous behavior (ignore).
+                        try:
+                            duration = None
+                            try:
+                                duration = float(mp4.info.length)
+                            except Exception:
+                                duration = None
+
+                            if duration and duration > 0 and len(change_titles) > 0:
+                                # Compute start times in milliseconds, evenly spaced
+                                num = len(change_titles)
+                                interval = duration / float(num)
+                                new_ch_objs = []
+                                for idx in range(num):
+                                    start_sec = idx * interval
+                                    start_ms = int(round(start_sec * 1000))
+                                    title = _clean(_normalize_chapter_title(change_titles[idx]))
+                                    try:
+                                        new_ch = Chapter(start=start_ms, title=title)
+                                    except Exception:
+                                        # If Chapter constructor expects seconds instead
+                                        # of ms, try seconds
+                                        try:
+                                            new_ch = Chapter(start=start_sec, title=title)
+                                        except Exception:
+                                            # Last resort: create a simple namespace-like object
+                                            new_ch = type('C', (), {})()
+                                            setattr(new_ch, 'start', start_ms)
+                                            setattr(new_ch, 'title', title)
+                                    new_ch_objs.append(new_ch)
+
+                                try:
+                                    mp4_chapters = MP4Chapters()
+                                    mp4_chapters._chapters = new_ch_objs
+                                    mp4.chapters = mp4_chapters
+                                    mp4.save()
+                                    # Verify persistence; reload and check
+                                    try:
+                                        mp4_reload = MP4(f)
+                                        if hasattr(mp4_reload, 'chapters') and mp4_reload.chapters:
+                                            results.append({'file': f, 'status': 'ok', 'note': 'created chapters'})
+                                        else:
+                                            # If mutagen didn't persist chapters, try ffmpeg metadata injection
+                                            import shutil, tempfile, subprocess
+                                            ffmpeg_path = shutil.which('ffmpeg')
+                                            # Fall back to ffmpeg injection using helper
+                                            try:
+                                                # Build a helper-friendly chapters list (start_ms/end_ms/title)
+                                                helper_chs = []
+                                                for idx in range(len(new_ch_objs)):
+                                                    start = getattr(new_ch_objs[idx], 'start', 0)
+                                                    # normalize to milliseconds
+                                                    if isinstance(start, (int,)) and start > 1000:
+                                                        s_ms = int(round(start))
+                                                    else:
+                                                        try:
+                                                            s_ms = int(round(float(start) * 1000))
+                                                        except Exception:
+                                                            s_ms = 0
+                                                    # end is next start or +1000ms
+                                                    if idx + 1 < len(new_ch_objs):
+                                                        nxt = getattr(new_ch_objs[idx+1], 'start', None)
+                                                        if isinstance(nxt, int) and nxt > 1000:
+                                                            e_ms = int(round(nxt))
+                                                        else:
+                                                            try:
+                                                                e_ms = int(round(float(nxt) * 1000)) if nxt is not None else s_ms + 1000
+                                                            except Exception:
+                                                                e_ms = s_ms + 1000
+                                                    else:
+                                                        e_ms = s_ms + 1000
+                                                    title = getattr(new_ch_objs[idx], 'title', '') or ''
+                                                    helper_chs.append({'start_ms': s_ms, 'end_ms': e_ms, 'title': title})
+
+                                                ff_res = ffmpeg_inject_chapters(f, helper_chs)
+                                                if ff_res.get('status') == 'ok':
+                                                    results.append({'file': f, 'status': 'ok', 'note': ff_res.get('note')})
+                                                elif ff_res.get('status') == 'no_ffmpeg':
+                                                    results.append({'file': f, 'status': 'ok', 'note': 'created chapters (in-memory only)'})
+                                                else:
+                                                    results.append({'file': f, 'status': 'error', 'error': ff_res.get('note')})
+                                            except Exception as e_meta:
+                                                results.append({'file': f, 'status': 'error', 'error': f'ffmpeg chapter injection failed: {e_meta}'})
+                                    except Exception:
+                                        results.append({'file': f, 'status': 'ok', 'note': 'created chapters'})
+                                except Exception as e:
+                                    # Could not create chapters; fallback to ignore
+                                    logger.warning("Could not create chapters for %s: %s", f, e)
+                                    results.append({'file': f, 'status': 'ok', 'note': 'no chapters'})
+                            else:
+                                logger.warning("No chapters found in %s; --chapter-titles ignored", f)
+                                results.append({'file': f, 'status': 'ok', 'note': 'no chapters'})
+                        except Exception as e:
+                            # Any unexpected error -> ignore chapter change for this file
+                            logger.warning("Failed while creating chapters for %s: %s", f, e)
+                            results.append({'file': f, 'status': 'ok', 'note': 'no chapters'})
+                    else:
+                        if len(existing_chapters) != len(change_titles):
+                            logger.error("Error: --chapter-titles provided %d titles but %d chapters found in %s", len(change_titles), len(existing_chapters), f)
+                            results.append({'file': f, 'status': 'error', 'error': 'chapter count mismatch'})
+                        else:
+                            # Replace titles while preserving start times
+                            new_ch_objs = []
+                            for idx, ch in enumerate(existing_chapters):
+                                try:
+                                    start = getattr(ch, 'start', None)
+                                except Exception:
+                                    start = None
+                                title = _clean(_normalize_chapter_title(change_titles[idx]))
+                                # Create new Chapter object if possible
+                                try:
+                                    new_ch = Chapter(start=start, title=title)
+                                except Exception:
+                                    # Fallback: mutate existing object's title attribute
+                                    try:
+                                        ch.title = title
+                                        new_ch = ch
+                                    except Exception:
+                                        new_ch = ch
+                                new_ch_objs.append(new_ch)
+
+                            # Assign chapters back
+                            try:
+                                mp4_chapters = MP4Chapters()
+                                mp4_chapters._chapters = new_ch_objs
+                                mp4.chapters = mp4_chapters
+                                mp4.save()
+                                results.append({'file': f, 'status': 'ok'})
+                            except Exception as e:
+                                results.append({'file': f, 'status': 'error', 'error': str(e)})
+                except Exception as e:
+                    results.append({'file': f, 'status': 'error', 'error': str(e)})
+            else:
+                # Finally, apply metadata to file (non-m4b or regular updates)
+                apply_metadata_to_file(f, upd)
+                results.append({'file': f, 'status': 'ok'})
+        except Exception as e:
+            results.append({'file': f, 'status': 'error', 'error': str(e)})
+
+    # Print JSON summary to stdout for CLI consumers/tests, and also log it
+    summary = json.dumps({'operation': 'change', 'path': path, 'results': results}, indent=2)
+    # Write the JSON summary explicitly to stdout so callers/tests that capture
+    # stdout receive only the JSON payload. Also emit the same summary to the
+    # logger for structured logging consumers.
+    try:
+        sys.stdout.write(summary + "\n")
+        sys.stdout.flush()
+    except Exception:
+        # Fallback to print if stdout isn't writable for some reason
+        try:
+            print(summary)
+        except Exception:
+            pass
+    logging.getLogger(__name__).info(summary)
 
 
 def cmd_mutate(args):
@@ -3400,7 +5060,7 @@ def cmd_mutate(args):
 
     try:
         if os.path.isfile(source_path):
-            print("Mutate operation requires a folder. Use extract for single files.")
+            logging.getLogger(__name__).error("Mutate operation requires a folder. Use extract for single files.")
             return
 
         elif os.path.isdir(source_path):
@@ -3419,7 +5079,7 @@ def cmd_mutate(args):
                 # Simple novel folder
                 # Extract metadata first, then mutate
                 metadata_dict = extract_metadata_from_folder(str(source_path), "novel")
-                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
+                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=_maybe_fix_author(getattr(args, 'author_name', None), getattr(args, 'author_fix', False)), narrator_name=getattr(args, 'narrator_name', None), author_fix=getattr(args, 'author_fix', False))
                 final_path = move_to_destination(mutated_path, str(destination_path), "novel")
                 result = {
                     "operation": "mutate",
@@ -3428,7 +5088,7 @@ def cmd_mutate(args):
                     "final_destination": final_path,
                     "folder_type": "novel"
                 }
-                print(json.dumps(result, indent=2))
+                logger.info(json.dumps(result, indent=2))
             elif has_subfolders:
                 # Could be series or batch - use batch_verify to analyze
                 if batch_verify:
@@ -3445,7 +5105,7 @@ def cmd_mutate(args):
                                         # Extract metadata first
                                         metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                         # Then mutate
-                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
+                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=_maybe_fix_author(getattr(args, 'author_name', None), getattr(args, 'author_fix', False)), narrator_name=getattr(args, 'narrator_name', None), author_fix=getattr(args, 'author_fix', False))
                                         # Move to destination
                                         final_path = move_to_destination(mutated_path, str(destination_path), folder_type)
                                         mutated_results.append({
@@ -3465,7 +5125,7 @@ def cmd_mutate(args):
                                 "operation": "mutate_batch",
                                 "results": mutated_results
                             }
-                            print(json.dumps(result, indent=2))
+                            logger.info(json.dumps(result, indent=2))
                             return
                     except Exception:
                         pass
@@ -3482,7 +5142,7 @@ def cmd_mutate(args):
                                     for path in item['paths']:
                                         try:
                                             metadata_dict = extract_metadata_from_folder(path, "series")
-                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
+                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=_maybe_fix_author(getattr(args, 'author_name', None), getattr(args, 'author_fix', False)), narrator_name=getattr(args, 'narrator_name', None), author_fix=getattr(args, 'author_fix', False))
                                             final_path = move_to_destination(mutated_path, str(destination_path), "series")
                                             mutated_results.append({
                                                 "folder_type": "series",
@@ -3501,13 +5161,13 @@ def cmd_mutate(args):
                                     "operation": "mutate_series",
                                     "results": mutated_results
                                 }
-                                print(json.dumps(result, indent=2))
+                                logger.info(json.dumps(result, indent=2))
                                 return
                     except Exception:
                         pass
 
                 # Final fallback: use our own recursive analysis
-                print("Using built-in folder structure analysis...")
+                logger.info("Using built-in folder structure analysis...")
                 try:
                     folder_structure = analyze_folder_structure(str(source_path))
                     if folder_structure:
@@ -3521,7 +5181,7 @@ def cmd_mutate(args):
                                     # Extract metadata first
                                     metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                     # Then mutate
-                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
+                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), part_titles=getattr(args, 'part_titles', False), author_name=_maybe_fix_author(getattr(args, 'author_name', None), getattr(args, 'author_fix', False)), narrator_name=getattr(args, 'narrator_name', None), author_fix=getattr(args, 'author_fix', False))
                                     # Move to destination
                                     final_path = move_to_destination(mutated_path, str(destination_path), folder_type)
                                     mutated_results.append({
@@ -3541,17 +5201,17 @@ def cmd_mutate(args):
                             "operation": "mutate_batch_fallback",
                             "results": mutated_results
                         }
-                        print(json.dumps(result, indent=2))
+                        logger.info(json.dumps(result, indent=2))
                         return
                 except Exception as e:
-                    print("Fallback analysis failed: {}".format(e))
+                    logger.error("Fallback analysis failed: %s", e)
 
                 raise ValueError("Could not process folder structure: {}".format(source_path))
             else:
                 raise ValueError("Folder {} contains no audio files".format(source_path))
 
     except Exception as e:
-        print("Error: {}".format(e))
+        logger.error("Error: %s", e)
 
 
 def cmd_config(args):
@@ -3575,7 +5235,7 @@ def cmd_config(args):
         elif args.reset:
             config.reset_to_defaults()
             config.save()
-            print("Configuration reset to defaults and saved.")
+            logger.info("Configuration reset to defaults and saved.")
         elif args.create_default:
             # If args.create_default is True, pass None to create default in cwd.
             create_default_config_file(None if args.create_default is True else args.create_default)
@@ -3592,18 +5252,18 @@ def cmd_config(args):
                 
                 config.set(key, parsed_value)
                 config.save()
-                print("Set {} = {}".format(key, parsed_value))
+                logger.info("Set %s = %s", key, parsed_value)
             except ValueError:
-                print("Error: --set requires format key=value")
+                logger.error("Error: --set requires format key=value")
         elif args.get:
             value = config.get(args.get)
-            print("{} = {}".format(args.get, value))
+            logger.info("%s = %s", args.get, value)
         else:
-            print("Configuration file location: {}".format(config.config_path or "Not found"))
-            print("Use --help for configuration options")
+            logger.info("Configuration file location: %s", config.config_path or "Not found")
+            logger.info("Use --help for configuration options")
             
     except ImportError:
-        print("Configuration management not available")
+        logger.error("Configuration management not available")
 
 
 def cmd_mutate_convert(args):
@@ -3624,7 +5284,7 @@ def cmd_mutate_convert(args):
         logger.debug("Temporary directory: %s", temp_dir)
         
         if os.path.isfile(source_path):
-            print("Mutate-convert operation requires a folder. Use extract for single files.")
+            logger.error("Mutate-convert operation requires a folder. Use extract for single files.")
             return
 
         elif os.path.isdir(source_path):
@@ -3646,8 +5306,9 @@ def cmd_mutate_convert(args):
                 # Simple novel folder
                 # Extract metadata first, then mutate
                 metadata_dict = extract_metadata_from_folder(str(source_path), "novel")
-                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
-                temp_mutated_path = move_to_destination(mutated_path, temp_dir, "novel")
+                # Mutate metadata in-place (do not copy into a temp folder)
+                mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=_maybe_fix_author(getattr(args, 'author_name', None), getattr(args, 'author_fix', False)), narrator_name=getattr(args, 'narrator_name', None), author_fix=getattr(args, 'author_fix', False), in_place=True)
+                temp_mutated_path = mutated_path
                 
                 logger.info("Mutated files created in: %s", temp_mutated_path)
                 
@@ -3656,14 +5317,26 @@ def cmd_mutate_convert(args):
                 
                 # Create a mock args object for cmd_convert
                 class MockArgs:
-                    def __init__(self, source, output, sort_by, chapter_titles=False, series_name=None):
+                    def __init__(self, source, output, sort_by, chapter_titles=False, series_name=None, author_name=None, author_fix=False, album_names=False):
                         self.source = source
                         self.output = output
                         self.sort_by = sort_by
                         self.chapter_titles = chapter_titles
                         self.series_name = series_name
-                
-                convert_args = MockArgs(temp_mutated_path, destination_path, args.sort_by, getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+                        self.author_name = author_name
+                        self.author_fix = author_fix
+                        self.album_names = album_names
+
+                convert_args = MockArgs(
+                    temp_mutated_path,
+                    destination_path,
+                    args.sort_by,
+                    getattr(args, 'chapter_titles', False),
+                    series_name=getattr(args, 'series_name', None),
+                    author_name=getattr(args, 'author_name', None),
+                    author_fix=getattr(args, 'author_fix', False),
+                    album_names=getattr(args, 'album_names', False)
+                )
                 cmd_convert(convert_args, source_path)  # Pass original source path
                 
                 logger.info("Mutate-convert operation completed successfully")
@@ -3685,25 +5358,38 @@ def cmd_mutate_convert(args):
                                         # Extract metadata first
                                         metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                         # Then mutate
-                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
-                                        # Move to temp directory
-                                        temp_mutated_path = move_to_destination(mutated_path, temp_dir, folder_type)
+                                        # Mutate metadata in-place (use original folder directly)
+                                        mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=_maybe_fix_author(getattr(args, 'author_name', None), getattr(args, 'author_fix', False)), narrator_name=getattr(args, 'narrator_name', None), author_fix=getattr(args, 'author_fix', False), in_place=True)
+                                        temp_mutated_path = mutated_path
                                         
                                         # Convert to M4B
                                         # Create a mock args object for cmd_convert
                                         class MockArgs:
-                                            def __init__(self, source, output, sort_by, chapter_titles=False, series_name=None):
+                                            def __init__(self, source, output, sort_by, chapter_titles=False, series_name=None, author_name=None, author_fix=False, album_names=False):
                                                 self.source = source
                                                 self.output = output
                                                 self.sort_by = sort_by
                                                 self.chapter_titles = chapter_titles
                                                 self.series_name = series_name
+                                                self.author_name = author_name
+                                                self.author_fix = author_fix
+                                                self.album_names = album_names
 
-                                        # Generate output filename from folder name
-                                        folder_name = os.path.basename(temp_mutated_path)
+                                        # Generate output filename from the original folder name (not the temp mutated folder)
+                                        raw_name = os.path.basename(folder_path.rstrip('/\\'))
+                                        folder_name = clean_album_name(raw_name) or raw_name
                                         m4b_output_path = os.path.join(destination_path, "{}.m4b".format(folder_name))
 
-                                        convert_args = MockArgs(temp_mutated_path, m4b_output_path, args.sort_by, getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+                                        convert_args = MockArgs(
+                                            temp_mutated_path,
+                                            m4b_output_path,
+                                            args.sort_by,
+                                            getattr(args, 'chapter_titles', False),
+                                            series_name=getattr(args, 'series_name', None),
+                                            author_name=getattr(args, 'author_name', None),
+                                            author_fix=getattr(args, 'author_fix', False),
+                                            album_names=getattr(args, 'album_names', False)
+                                        )
                                         cmd_convert(convert_args, folder_path)  # Pass original folder path
                                         
                                         convert_results.append({
@@ -3723,7 +5409,7 @@ def cmd_mutate_convert(args):
                                 "operation": "mutate_convert_batch",
                                 "results": convert_results
                             }
-                            print(json.dumps(result, indent=2))
+                            logger.info(json.dumps(result, indent=2))
                             return
                     except Exception:
                         pass
@@ -3740,22 +5426,27 @@ def cmd_mutate_convert(args):
                                     for path in item['paths']:
                                         try:
                                             metadata_dict = extract_metadata_from_folder(path, "series")
-                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
-                                            temp_mutated_path = move_to_destination(mutated_path, temp_dir, "series")
+                                            # Mutate metadata in-place (use original folder directly)
+                                            mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=_maybe_fix_author(getattr(args, 'author_name', None), getattr(args, 'author_fix', False)), narrator_name=getattr(args, 'narrator_name', None), author_fix=getattr(args, 'author_fix', False), in_place=True)
+                                            temp_mutated_path = mutated_path
                                             
                                             # Convert to M4B
                                             class MockArgs:
-                                                def __init__(self, source, output, sort_by, chapter_titles=False, series_name=None):
+                                                def __init__(self, source, output, sort_by, chapter_titles=False, series_name=None, author_fix=False, album_names=False):
                                                     self.source = source
                                                     self.output = output
                                                     self.sort_by = sort_by
                                                     self.chapter_titles = chapter_titles
                                                     self.series_name = series_name
+                                                    self.author_fix = author_fix
+                                                    self.album_names = album_names
                                             
-                                            folder_name = os.path.basename(temp_mutated_path)
+                                            # Use the original path provided by series_verify to derive the output filename
+                                            raw_name = os.path.basename(path.rstrip('/\\'))
+                                            folder_name = clean_album_name(raw_name) or raw_name
                                             m4b_output_path = os.path.join(destination_path, "{}.m4b".format(folder_name))
                                             
-                                            convert_args = MockArgs(temp_mutated_path, m4b_output_path, args.sort_by, getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+                                            convert_args = MockArgs(temp_mutated_path, m4b_output_path, args.sort_by, getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), author_fix=getattr(args, 'author_fix', False), album_names=getattr(args, 'album_names', False))
                                             cmd_convert(convert_args, path)  # Pass original folder path
                                             
                                             convert_results.append({
@@ -3770,18 +5461,18 @@ def cmd_mutate_convert(args):
                                                 "folder": path,
                                                 "error": str(e)
                                             })
-                            if convert_results:
-                                result = {
-                                    "operation": "mutate_convert_series",
-                                    "results": convert_results
-                                }
-                                print(json.dumps(result, indent=2))
-                                return
+                                if convert_results:
+                                    result = {
+                                        "operation": "mutate_convert_series",
+                                        "results": convert_results
+                                    }
+                                    logger.info(json.dumps(result, indent=2))
+                                    return
                     except Exception:
                         pass
 
                 # Final fallback: use our own recursive analysis
-                print("Using built-in folder structure analysis...")
+                logger.info("Using built-in folder structure analysis...")
                 try:
                     folder_structure = analyze_folder_structure(str(source_path))
                     if folder_structure:
@@ -3795,25 +5486,37 @@ def cmd_mutate_convert(args):
                                     # Extract metadata first
                                     metadata_dict = extract_metadata_from_folder(folder_path, folder_type)
                                     # Then mutate
-                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=getattr(args, 'author_name', None))
+                                    mutated_path = mutate_metadata(metadata_dict, args.album_sort_prefix, args.album_suffix, sort_by='filename', chapter_titles=getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None), part_titles=getattr(args, 'part_titles', False), author_name=_maybe_fix_author(getattr(args, 'author_name', None), getattr(args, 'author_fix', False)), narrator_name=getattr(args, 'narrator_name', None), author_fix=getattr(args, 'author_fix', False))
                                     # Move to temp directory
                                     temp_mutated_path = move_to_destination(mutated_path, temp_dir, folder_type)
-                                    
+
                                     # Convert to M4B
                                     class MockArgs:
-                                        def __init__(self, source, output, sort_by, chapter_titles=False, series_name=None):
-                                            self.source = source
-                                            self.output = output
-                                            self.sort_by = sort_by
-                                            self.chapter_titles = chapter_titles
-                                            self.series_name = series_name
-                                    
-                                    folder_name = os.path.basename(temp_mutated_path)
+                                            def __init__(self, source, output, sort_by, chapter_titles=False, series_name=None, author_fix=False, album_names=False):
+                                                self.source = source
+                                                self.output = output
+                                                self.sort_by = sort_by
+                                                self.chapter_titles = chapter_titles
+                                                self.series_name = series_name
+                                                self.author_fix = author_fix
+                                                self.album_names = album_names
+
+                                    # Use the original folder path from folder_structure to derive the output filename
+                                    raw_name = os.path.basename(folder_path.rstrip('/\\'))
+                                    folder_name = clean_album_name(raw_name) or raw_name
                                     m4b_output_path = os.path.join(destination_path, "{}.m4b".format(folder_name))
-                                    
-                                    convert_args = MockArgs(temp_mutated_path, m4b_output_path, args.sort_by, getattr(args, 'chapter_titles', False), series_name=getattr(args, 'series_name', None))
+
+                                    convert_args = MockArgs(
+                                        temp_mutated_path,
+                                        m4b_output_path,
+                                        args.sort_by,
+                                        getattr(args, 'chapter_titles', False),
+                                        series_name=getattr(args, 'series_name', None),
+                                        author_fix=getattr(args, 'author_fix', False),
+                                        album_names=getattr(args, 'album_names', False)
+                                    )
                                     cmd_convert(convert_args, folder_path)  # Pass original folder path
-                                    
+
                                     convert_results.append({
                                         "folder_type": folder_type,
                                         "original_folder": folder_path,
@@ -3831,18 +5534,18 @@ def cmd_mutate_convert(args):
                             "operation": "mutate_convert_batch_fallback",
                             "results": convert_results
                         }
-                        print(json.dumps(result, indent=2))
+                        logger.info(json.dumps(result, indent=2))
                         return
                 except Exception as e:
-                    print("Fallback analysis failed: {}".format(e))
+                    logger.error("Fallback analysis failed: %s", e)
 
-                print("Multi-folder processing not yet supported for mutate-convert")
+                logger.error("Multi-folder processing not yet supported for mutate-convert")
                 return
             else:
-                print("No audio files found in source folder")
+                logger.error("No audio files found in source folder")
                 return
         else:
-            print("Source path does not exist: {}".format(source_path))
+            logger.error("Source path does not exist: %s", source_path)
             return
 
     except Exception as e:
@@ -3879,6 +5582,9 @@ def cmd_info(args):
     except ImportError:
         pass
 
+
+
+
 def cli(argv=None):
     parser = argparse.ArgumentParser(prog='audiobook-p', description='Audiobook processing utility')
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
@@ -3896,12 +5602,15 @@ def cli(argv=None):
     mutate_parser = subparsers.add_parser('mutate', help='Mutate metadata and move files (enclose paths with spaces in quotes)')
     mutate_parser.add_argument('source', help='Path to audio folder (quotes required if path contains spaces)')
     mutate_parser.add_argument('destination', help='Destination path for mutated files (quotes required if path contains spaces)')
-    mutate_parser.add_argument('--album-sort-prefix', help='String to prefix album_sort with " : " separator')
+    mutate_parser.add_argument('--album-sort-prefix', help='String to prefix album_sort with " - " separator')
     mutate_parser.add_argument('--album-suffix', help='String to suffix album with " - " separator')
-    mutate_parser.add_argument('--chapter-titles', action='store_true', help='Use "BookName: Chapter X" format for track titles instead of existing titles')
+    mutate_parser.add_argument('--chapter-titles', action='store_true', help='Use "BookName - Chapter X" format for track titles instead of existing titles')
     mutate_parser.add_argument('--series-name', help='Explicit series name to apply to grouping and series freeform')
     mutate_parser.add_argument('--part-titles', action='store_true', help='Set titles and filenames to "<Cleaned Folder Name>: Part N" grouping every 10 files')
     mutate_parser.add_argument('--author-name', help='Explicit author/artist name to apply to artist tag (will be cleaned)')
+    mutate_parser.add_argument('--author-fix', action='store_true', help='If set, treat provided author name as "Last, First" and convert to "First Last"')
+    mutate_parser.add_argument('--narrator-name', help='Explicit narrator/composer name to apply to composer tag (will be cleaned)')
+    mutate_parser.add_argument('--album-names', action='store_true', help='Force album name to cleaned folder name')
     mutate_parser.set_defaults(func=cmd_mutate)
 
     # Convert command
@@ -3910,20 +5619,55 @@ def cli(argv=None):
     convert_parser.add_argument('output', help='Output directory or M4B file path (quotes required if path contains spaces)')
     convert_parser.add_argument('--sort-by', choices=['filename', 'track'], default='filename', help='Sort files by filename (default) or track number metadata')
     convert_parser.add_argument('--series-name', help='Explicit series name to apply to grouping and series freeform')
+    convert_parser.add_argument('--album-names', action='store_true', help='Force album name to cleaned folder name')
     convert_parser.set_defaults(func=cmd_convert)
 
     # Mutate-Convert command
     mutate_convert_parser = subparsers.add_parser('mutate-convert', help='Mutate metadata then convert to M4B in one operation (enclose paths with spaces in quotes)')
     mutate_convert_parser.add_argument('source', help='Path to audio folder (quotes required if path contains spaces)')
     mutate_convert_parser.add_argument('destination', help='Destination path for final M4B file (quotes required if path contains spaces)')
-    mutate_convert_parser.add_argument('--album-sort-prefix', help='String to prefix album_sort with " : " separator')
+    mutate_convert_parser.add_argument('--album-sort-prefix', help='String to prefix album_sort with " - " separator')
     mutate_convert_parser.add_argument('--album-suffix', help='String to suffix album with " - " separator')
     mutate_convert_parser.add_argument('--sort-by', choices=['filename', 'track'], default='filename', help='Sort files by filename (default) or track number metadata')
-    mutate_convert_parser.add_argument('--chapter-titles', action='store_true', help='Use "BookName: Chapter X" format for track titles instead of existing titles')
+    mutate_convert_parser.add_argument('--chapter-titles', action='store_true', help='Use "BookName - Chapter X" format for track titles instead of existing titles')
     mutate_convert_parser.add_argument('--series-name', help='Explicit series name to apply to grouping and series freeform')
     mutate_convert_parser.add_argument('--part-titles', action='store_true', help='Set titles and filenames to "<Cleaned Folder Name>: Part N" grouping every 10 files')
     mutate_convert_parser.add_argument('--author-name', help='Explicit author/artist name to apply to artist tag (will be cleaned)')
+    mutate_convert_parser.add_argument('--author-fix', action='store_true', help='If set, treat provided author name as "Last, First" and convert to "First Last"')
+    mutate_convert_parser.add_argument('--narrator-name', help='Explicit narrator/composer name to apply to composer tag (will be cleaned)')
+    mutate_convert_parser.add_argument('--album-names', action='store_true', help='Force album name to cleaned folder name')
     mutate_convert_parser.set_defaults(func=cmd_mutate_convert)
+
+    # Change command - update metadata on files or a folder of files
+    change_parser = subparsers.add_parser('change', help='Change metadata on a single audio file or all audio files in a folder')
+    change_parser.add_argument('path', help='Path to audio file or folder (quotes required if path contains spaces)')
+    change_parser.add_argument('--album', help='Set album tag')
+    change_parser.add_argument('--album-sort', help='Set album_sort tag')
+    change_parser.add_argument('--author', help='Set artist/author tag')
+    change_parser.add_argument('--author-fix', action='store_true', help='If set, treat provided --author value as "Last, First" and convert to "First Last"')
+    change_parser.add_argument('--narrator', help='Set composer/narrator tag')
+    change_parser.add_argument('--series', help='Set series/grouping tag')
+    change_parser.add_argument('--genre', help='Set genre tag')
+    change_parser.add_argument('--year', help='Set year tag')
+    change_parser.add_argument('--title', help='Set title for files (not allowed for .m4b)')
+    change_parser.add_argument(
+        '--chapter-titles-file',
+        help=(
+            'Path to a chapter titles file. Supported formats:\n'
+            '- JSON array of strings: ["Title 1", "Title 2"]\n'
+            '- JSON array of objects for timed chapters: [{"start":"00:00:00","end":"00:05:00","title":"Chapter 1"}, ...]\n'
+            '- ffmetadata (ffmpeg) files starting with ";FFMETADATA1" and containing [CHAPTER] sections\n'
+            '- Plain text: one title per line\n\n'
+            'Usage notes:\n'
+            '- For folders: provide a list/array of titles (one per audio file, in filename order).\n'
+            "- For a single .m4b: you may provide timed entries (start/end/title) to set chapter boundaries.\n"
+            'Examples:\n'
+            '  audiobook-p change /path/to/book.m4b --chapter-titles-file chapters.json\n'
+            '  audiobook-p change /path/to/folder --chapter-titles-file titles.txt\n'
+            'Times may be in HH:MM:SS, MM:SS or seconds (e.g. "65.5").'
+        )
+    )
+    change_parser.set_defaults(func=cmd_change)
 
     # Config command
     config_parser = subparsers.add_parser('config', help='Manage configuration settings')

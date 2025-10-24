@@ -70,7 +70,7 @@ def process_audiobook_workflow(source_folder, output_file, album_prefix=None, al
             temp_output = os.path.join(temp_dir, "mutated")
 
             # Mutate the metadata
-            mutated_path = mutate_metadata(metadata, album_prefix, album_suffix, author_name=None)
+            mutated_path = mutate_metadata(metadata, album_prefix, album_suffix, author_name=None, narrator_name=None)
 
             # Move to temp location
             final_mutated_path = move_to_destination(mutated_path, str(temp_output), "novel")

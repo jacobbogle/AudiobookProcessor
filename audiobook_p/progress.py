@@ -20,7 +20,13 @@ class ProgressTracker:
         self.bar_width = bar_width
         self.start_time = time.time()
         self.last_display = ""
-        
+        # Decide whether to emit an interactive stdout bar (only when attached to a TTY)
+        try:
+            self._use_stdout = sys.stdout.isatty()
+        except Exception:
+            # In some test harnesses sys.stdout may be wrapped; fall back to False
+            self._use_stdout = False
+
         # Detect Unicode support and set characters accordingly
         self._detect_unicode_support()
         
@@ -83,12 +89,20 @@ class ProgressTracker:
                     eta_str = f"{int(eta_seconds // 60)}m {int(eta_seconds % 60)}s"
                 progress_str += f" (ETA: {eta_str})"
         
-        # Only print if different from last display to avoid spam
-        if progress_str != self.last_display:
-            # Clear the current line using ANSI escape code and print the new progress
-            print('\033[2K\r', end='', flush=True)  # Clear entire line and return to start
-            print(progress_str, end='', flush=True)  # Print new progress without newline
-            self.last_display = progress_str
+        # Emit interactive bar to stdout only when stdout is a TTY; otherwise log the progress
+        if self._use_stdout:
+            if progress_str != self.last_display:
+                # Clear the current line using ANSI escape code and write the new progress to stdout
+                try:
+                    sys.stdout.write('\033[2K\r')
+                    sys.stdout.write(progress_str)
+                    sys.stdout.flush()
+                    self.last_display = progress_str
+                except Exception:
+                    # Fall back to logging if stdout writes fail
+                    logging.getLogger('audiobook_p.progress').info(progress_str)
+        else:
+            logging.getLogger('audiobook_p.progress').info(progress_str)
         
     def finish(self, message: str = "Complete"):
         """Mark progress as finished"""
@@ -102,9 +116,16 @@ class ProgressTracker:
         if message:
             progress_str += f" - {message}"
         progress_str += f" ✓ Completed in {elapsed:.1f}s"
-        
-        print(progress_str)  # Final message should stay on screen
-        print()  # Add newline for subsequent output
+        # Final message: show interactive completion on stdout when possible,
+        # otherwise emit via logging so callers/tests can capture it.
+        if self._use_stdout:
+            try:
+                sys.stdout.write(progress_str + "\n")
+                sys.stdout.flush()
+            except Exception:
+                logging.getLogger('audiobook_p.progress').info(progress_str)
+        else:
+            logging.getLogger('audiobook_p.progress').info(progress_str)
 
 
 class Logger:
@@ -112,8 +133,18 @@ class Logger:
 
     def __init__(self, level: str = 'INFO', show_timestamps: bool = False):
         self.logger = logging.getLogger('audiobook_p.progress')
+        # Ensure we write CLI-style progress/logging to stdout so consumers that
+        # capture stdout (CLI callers/tests) receive the messages. Avoid adding
+        # duplicate handlers when already configured.
         if not self.logger.handlers:
-            logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+            self.logger.addHandler(handler)
+            # Default level respects the provided level string
+            try:
+                self.logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+            except Exception:
+                self.logger.setLevel(logging.INFO)
         self.show_timestamps = show_timestamps
 
     def debug(self, message: str):
@@ -203,19 +234,19 @@ def ask_user_confirmation(message: str, default: bool = False) -> bool:
     while True:
         try:
             response = input(f"{message} [{default_str}]: ").strip().lower()
-            
+
             if not response:
                 return default
-            
+
             if response in ['y', 'yes']:
                 return True
             elif response in ['n', 'no']:
                 return False
             else:
-                print("Please enter 'y' for yes or 'n' for no.")
-                
+                logging.getLogger(__name__).warning("Please enter 'y' for yes or 'n' for no.")
+
         except KeyboardInterrupt:
-            print("\nOperation cancelled by user.")
+            logging.getLogger(__name__).warning("Operation cancelled by user.")
             return False
 
 
@@ -227,7 +258,7 @@ def display_operation_summary(operation: str, stats: dict):
         operation: Name of the operation
         stats: Dictionary containing operation statistics
     """
-    print(f"\n=== {operation} Summary ===")
+    logging.getLogger(__name__).info(f"\n=== {operation} Summary ===")
     
     for key, value in stats.items():
         # Format the key for display
@@ -252,8 +283,8 @@ def display_operation_summary(operation: str, stats: dict):
                 formatted_value = str(value)
         else:
             formatted_value = str(value)
-        
-        print(f"  {display_key}: {formatted_value}")
+
+        logging.getLogger(__name__).info(f"  {display_key}: {formatted_value}")
 
 
 def show_processing_estimate(file_count: int, total_size_mb: float):
@@ -269,23 +300,23 @@ def show_processing_estimate(file_count: int, total_size_mb: float):
     conversion_time = total_size_mb * 2  # ~2 seconds per MB
     total_estimate = metadata_time + conversion_time
     
-    print("\n📊 Processing Estimate:")
-    print(f"   Files: {file_count}")
-    print(f"   Total Size: {total_size_mb:.1f} MB")
+    logging.getLogger(__name__).info("\n📊 Processing Estimate:")
+    logging.getLogger(__name__).info(f"   Files: {file_count}")
+    logging.getLogger(__name__).info(f"   Total Size: {total_size_mb:.1f} MB")
     
     if total_estimate < 60:
-        print(f"   Estimated Time: {int(total_estimate)} seconds")
+        logging.getLogger(__name__).info(f"   Estimated Time: {int(total_estimate)} seconds")
     else:
         minutes = int(total_estimate // 60)
         seconds = int(total_estimate % 60)
-        print(f"   Estimated Time: {minutes}m {seconds}s")
+        logging.getLogger(__name__).info(f"   Estimated Time: {minutes}m {seconds}s")
     
-    print()
+    logging.getLogger(__name__).info("")
 
 
 if __name__ == "__main__":
     # Test the progress tracking system
-    print("Testing progress tracking...")
+    logging.getLogger(__name__).info("Testing progress tracking...")
     
     # Test basic progress tracker
     
@@ -304,4 +335,4 @@ if __name__ == "__main__":
     logger.debug("This is a debug message")
     logger.error("This is an error")
     
-    print("\nProgress tracking system ready")
+    logging.getLogger(__name__).info("\nProgress tracking system ready")
