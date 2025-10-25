@@ -21,7 +21,7 @@ def test_mutate_metadata_basic():
         }
     }
     try:
-        result = mutate_metadata(metadata, in_place=True)
+        result = mutate_metadata(metadata)
         assert 'files' in result
         assert 'test.mp3' in result['files']
         meta = result['files']['test.mp3']

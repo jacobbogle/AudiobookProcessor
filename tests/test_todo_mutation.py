@@ -13,7 +13,7 @@ def test_mutate_metadata_dict_output():
     with open(dummy_path, "wb") as f:
         f.write(b"ID3")
     meta = extract_metadata_from_folder(tmpdir, folder_type="auto")
-    result = mutate_metadata(meta, album_sort_prefix="TestPrefix", author_fix=True, part_titles=True, author_name="Author", in_place=True)
+    result = mutate_metadata(meta, album_sort_prefix="TestPrefix", author_fix=True, part_titles=True, author_name="Author")
     assert isinstance(result, dict)
     assert "folder" in result and "files" in result
     for f, m in result["files"].items():
@@ -39,8 +39,7 @@ def test_mutate_metadata_tag_logic():
         narrator_name="Narrator Name",
         series_name="Series Name",
         author_fix=True,
-        part_titles=True,
-        in_place=True
+        part_titles=True
     )
     assert isinstance(result, dict)
     assert "folder" in result and "files" in result

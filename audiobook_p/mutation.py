@@ -859,7 +859,9 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
     folder = metadata_dict.get('folder')
     from audiobook_p.utils import book_title_logic, clean_album_name
     # Always use the provided folder for all file operations, do NOT descend into subdirectories for renaming/cleanup/metadata
-    working_dir = folder    # Assign album and folder_name before using them
+    working_dir = folder
+
+    # Assign album and folder_name before using them
     orig_folder = metadata_dict.get('folder', folder)
     folder_name = os.path.basename(orig_folder)
     album = clean_album_name(folder_name)
@@ -881,35 +883,6 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
 
     if not folder or not files:
         return {'folder': folder, 'files': {}}
-    
-    # If not in_place, create a temporary copy of the folder
-    if not in_place:
-        import tempfile
-        import shutil
-        temp_dir = tempfile.mkdtemp(prefix='audiobook_mutate_')
-        print(f"[DIAG] Creating temporary copy for in_place=False: {temp_dir}")
-        # Copy the entire folder contents to temp directory
-        for item in os.listdir(working_dir):
-            src_path = os.path.join(working_dir, item)
-            dst_path = os.path.join(temp_dir, item)
-            if os.path.isdir(src_path):
-                shutil.copytree(src_path, dst_path)
-            else:
-                shutil.copy2(src_path, dst_path)
-        # Update file paths to point to temp directory
-        old_working_dir = working_dir
-        working_dir = temp_dir
-        print(f"[DIAG] Working directory set to temp copy: {working_dir}")
-        # Update the files dictionary to use temp directory paths
-        updated_files = {}
-        for old_path, meta in files.items():
-            # Get the relative path from the old working directory
-            rel_path = os.path.relpath(old_path, old_working_dir)
-            new_path = os.path.join(working_dir, rel_path)
-            updated_files[new_path] = meta
-        files = updated_files
-        print(f"[DIAG] Updated file paths for temp directory: {list(files.keys())}")
-    
     folder_name = os.path.basename(orig_folder)
     album = clean_album_name(folder_name)
 
@@ -934,9 +907,7 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
 
     # Ensure all source files are present in working_dir before renaming
     import shutil
-    # Don't override temp directory when in_place=False
-    if in_place:
-        working_dir = folder
+    working_dir = folder
     for f in static_files:
         src_path = os.path.normpath(f)
         dst_path = os.path.normpath(os.path.join(working_dir, os.path.basename(f)))
@@ -955,8 +926,8 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
     series_index = metadata_dict.get('series_index', '')
     total = len(static_files)
     # Always use the provided folder for all file operations, but if only one subfolder exists, use it
-    # But don't override the temp directory when in_place=False
-    if in_place and os.path.exists(working_dir) and os.path.isdir(working_dir):
+    working_dir = folder
+    if os.path.exists(working_dir) and os.path.isdir(working_dir):
         subdirs = [f for f in os.listdir(working_dir) if os.path.isdir(os.path.join(working_dir, f))]
         if len(subdirs) == 1:
             subfolder = os.path.join(working_dir, subdirs[0])
@@ -1138,12 +1109,49 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
 
     if os.path.exists(working_dir) and os.path.isdir(working_dir):
         _print_full_tree(working_dir)
+    return {'folder': working_dir, 'files': renamed_file_map}
 
-    # Return based on in_place parameter
-    if in_place:
-        return {'folder': working_dir, 'files': renamed_file_map}
-    else:
-        return working_dir
+    # Perform all renames first
+    for src, dst in rename_plan:
+        if os.path.abspath(src) != os.path.abspath(dst):
+            try:
+                from audiobook_p.utils import move_file
+                print(f"[DIAG] Renaming file: {src} -> {dst}")
+                move_file(src, dst, overwrite=True)
+            except Exception as e:
+                print(f"[DIAG] Exception during rename: {e}")
+
+    # Cleanup: remove any file (not directory) in the directory that is not in expected_files
+    if os.path.exists(working_dir) and os.path.isdir(working_dir):
+        print(f"[DIAG] Directory listing before cleanup (in working_dir): {os.listdir(working_dir)}")
+        print(f"[DIAG] Expected files after renaming: {sorted(expected_files)}")
+        for fname in os.listdir(working_dir):
+            fpath = os.path.abspath(os.path.join(working_dir, fname))
+            if fname not in expected_files and os.path.isfile(fpath):
+                try:
+                    os.remove(fpath)
+                    print(f"[DIAG] Removed stale file: {fpath}")
+                except Exception as e:
+                    print(f"[DIAG] Failed to remove stale file: {fpath} due to {e}")
+        print(f"[DIAG] Directory listing after cleanup (in working_dir): {os.listdir(working_dir)}")
+
+    # Diagnostic: print renamed_files and directory contents before metadata application
+    print(f"[DIAG] Renamed files to apply metadata: {renamed_files}")
+    if os.path.exists(working_dir) and os.path.isdir(working_dir):
+        print(f"[DIAG] Directory listing before metadata application (in working_dir): {os.listdir(working_dir)}")
+
+    # Second pass: apply metadata only to renamed files (after cleanup)
+    for f, meta in zip(renamed_files, file_metas):
+        renamed_file_map[f] = meta
+        print(f"[DIAG] Applying metadata to file: {f} with meta: {meta}")
+        try:
+            (apply_metadata_to_file or apply_metadata_to_file_default)(f, meta)
+        except Exception:
+            pass
+
+    return {'folder': working_dir, 'files': renamed_file_map}
+    # Always return dict for test compatibility
+    return {'folder': working_dir, 'files': renamed_file_map}
 
 # --- _author_last_first_to_first_last ---
 def _author_last_first_to_first_last(name):

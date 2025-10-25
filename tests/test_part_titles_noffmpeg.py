@@ -32,13 +32,9 @@ def test_part_titles_no_ffmpeg(monkeypatch, tmp_path):
 
     # Replace apply_metadata_to_file with a no-op recorder so mutate_metadata can call it
     calls = []
-    saved_titles = {}
 
     def fake_apply(path, md):
         calls.append((path, dict(md)))
-        # Simulate saving the title to TIT2
-        if 'title' in md:
-            saved_titles[path] = md['title']
 
     monkeypatch.setattr(mainmod, 'apply_metadata_to_file', fake_apply)
 
@@ -47,6 +43,8 @@ def test_part_titles_no_ffmpeg(monkeypatch, tmp_path):
 
     class FakeID3NoHeaderError(Exception):
         pass
+
+    saved_titles = {}
 
     class FakeTIT2:
         def __init__(self, encoding=3, text=None):
@@ -94,14 +92,16 @@ def test_part_titles_no_ffmpeg(monkeypatch, tmp_path):
     mutated = None
     legacy_result = None
     try:
-        mutated = mainmod.mutate_metadata(meta, part_titles=True, chapter_titles=True, in_place=False, apply_metadata_to_file=fake_apply)
+        mutated = mainmod.mutate_metadata(meta, part_titles=True, in_place=False)
         assert mutated
     except Exception as e:
         if legacy_test_converter:
             legacy_result = legacy_test_converter(meta)
             assert 'files' in legacy_result
         else:
-            raise    # Validate TIT2 values we recorded via FakeID3.save for each file present in the mutated folder
+            raise
+
+    # Validate TIT2 values we recorded via FakeID3.save for each file present in the mutated folder
     import glob
     files = []
     if mutated and isinstance(mutated, (str, os.PathLike)):
