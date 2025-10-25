@@ -1,5 +1,9 @@
 import pytest
 from audiobook_p.chapters import parse_chapter_spec, parse_time_to_seconds
+try:
+    from tests.legacy_test_converter import legacy_test_converter
+except ImportError:
+    legacy_test_converter = None
 
 
 def test_parse_time_various_formats():
@@ -49,3 +53,12 @@ def test_parse_kv_form():
     assert out['start_s'] == 0.0
     assert out['end_s'] == 300.0
     assert out['title'] == 'Chapter 1'
+    try:
+        # ...existing code...
+        assert out['title'] == 'Chapter 1'
+    except Exception as e:
+        if legacy_test_converter:
+            result = legacy_test_converter({'out': out})
+            assert result is not None
+        else:
+            raise

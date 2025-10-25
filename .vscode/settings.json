@@ -3,5 +3,11 @@
         "audiobook_p"
     ],
     "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
+    "python.testing.pytestEnabled": true,
+    "github.copilot.chat.codesearch.enabled": true,
+    "github.copilot.chat.executePrompt.enabled": true,
+    "chat.todoListTool.writeOnly": true,
+    "chat.useNestedAgentsMdFiles": true,
+    "inlineChat.notebookAgent": true,
+    "chat.agent.maxRequests": 1500
 }

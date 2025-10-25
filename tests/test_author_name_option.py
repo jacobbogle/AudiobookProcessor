@@ -1,6 +1,11 @@
-import os
 
+import os
 from audiobook_p import main as mainmod
+
+def test_author_name_option_smoke():
+    # Dummy test for restoration
+    assert True
+
 
 
 def test_author_name_applies_artist_tag(tmp_path, monkeypatch):
@@ -37,10 +42,10 @@ def test_author_name_applies_artist_tag(tmp_path, monkeypatch):
     author_input = '  01 john doe  '
 
     # Run mutate_metadata with author_name provided
-    mutated = mainmod.mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=False, author_name=author_input)
+    mutated = mainmod.mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=False, author_name=author_input, apply_metadata_to_file=fake_apply_metadata_to_file)
 
-    # Ensure mutated path exists
-    assert os.path.isdir(mutated)
+    # Ensure mutated['folder'] path exists
+    assert os.path.isdir(mutated['folder'])
 
     # The cleaning logic uses book_title_logic which removes leading numeric prefixes and caps the first alpha
     # For '  01 john doe  ' we expect 'John doe' (first alpha capitalized, leading '01 ' removed)

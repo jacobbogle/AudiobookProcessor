@@ -1,19 +1,19 @@
 import os
 import shutil
 import subprocess
-
 import pytest
 from mutagen.mp4 import MP4
-
 from audiobook_p import main as mainmod
-
+try:
+    from tests.legacy_test_converter import legacy_test_converter
+except ImportError:
+    legacy_test_converter = None
 
 def has_ffmpeg():
     try:
         return shutil.which('ffmpeg') is not None
     except Exception:
         return False
-
 
 @pytest.mark.skipif(not has_ffmpeg(), reason="ffmpeg not available on this runner")
 def test_chapter_titles_appear_in_m4b_chapters(tmp_path):
@@ -61,10 +61,7 @@ def test_chapter_titles_appear_in_m4b_chapters(tmp_path):
 
     # Run the mutate-convert pipeline
     mainmod.cmd_mutate_convert(mc_args)
-
-    # Verify output exists
     assert os.path.exists(str(out_m4b)), "Expected output M4B to be created"
-
     audio = MP4(str(out_m4b))
     chapters = audio.chapters
     assert chapters is not None, "Expected chapters to be present in the M4B"
