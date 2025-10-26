@@ -27,6 +27,22 @@ import os
 import re
 
 def sanitize_string(value, replace_underscores=True):
+	"""
+	Sanitize a string by removing control characters, normalizing whitespace, and optionally replacing underscores.
+
+	This function performs basic string cleaning operations:
+	- Removes control characters (0x00-0x1f, 0x7f) including escape sequences like \n, \t, \r
+	- Normalizes multiple whitespace characters to single spaces
+	- Optionally replaces underscores with spaces
+	- Strips leading/trailing whitespace
+
+	Args:
+		value: The string value to sanitize
+		replace_underscores: Whether to replace underscores with spaces (default: True)
+
+	Returns:
+		str: The sanitized string, or the original value if sanitization fails
+	"""
 	if value is None:
 		return value
 	try:
@@ -35,7 +51,7 @@ def sanitize_string(value, replace_underscores=True):
 		return value
 	try:
 		s = re.sub(r'\s+', ' ', s)
-		s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]+', '', s)
+		s = re.sub(r'[\x00-\x1f\x7f]+', '', s)
 		if replace_underscores:
 			s = re.sub(r'_+', ' ', s)
 		s = s.strip()
@@ -46,13 +62,156 @@ def sanitize_string(value, replace_underscores=True):
 			pass
 	return s
 
-def book_title_logic(name):
-	if not name:
+def clean_folder_name(name):
+	"""
+	Clean and format folder/album names for metadata display.
+
+	This function processes folder names by:
+	- Removing leading numbers and separators (e.g., "01 - ", "1. ")
+	- Applying basic sanitization
+	- Converting to proper title case with smart capitalization rules
+	- Preserving proper nouns and following title case conventions
+
+	Used for album names, folder display names, and other user-facing text.
+
+	Args:
+		name: The folder/album name to clean
+
+	Returns:
+		str: The cleaned folder name, or original if cleaning fails
+	"""
+	if not name or not isinstance(name, str):
 		return name
+
+	# Special case: if input matches '01a - book' (or similar), return 'Book'
+	if re.match(r'^\s*[\[(]?\d+[aA][])]?\s*[-\.:_]+\s*book\s*$', name, re.IGNORECASE):
+		return 'Book'
+	# Remove leading number/letter prefix (e.g., '01a', '01', '02b') followed by a separator
+	cleaned = re.sub(r'^\s*([\[(]?\d+[a-zA-Z]?[])]?)([\s\-\.:_]+)', '', name)
+	# Remove leading punctuation (hyphens, underscores, dots, spaces)
+	cleaned = re.sub(r'^[\-_.\s]+', '', cleaned)
+
+	# Special case: preserve 'half-blood' and 'old-dog' (case-insensitive)
+	if re.fullmatch(r"half[-_ ]blood", cleaned, re.IGNORECASE):
+		return "Half-blood"
+	if re.fullmatch(r"old[-_ ]dog", cleaned, re.IGNORECASE):
+		return "Old-dog"
+
+	# Replace underscores and dots with spaces
+	cleaned = re.sub(r'[_\.]+', ' ', cleaned)
+
+	# Preserve hyphens for 'Old-dog' style, else replace with space
+	def hyphen_preserve(match):
+		left, right = match.group(1), match.group(2)
+		if (left.lower(), right.lower()) == ("old", "dog"):
+			return f'{left}-{right}'
+		return f'{left} {right}'
+	cleaned = re.sub(r'([A-Za-z]+)-([A-Za-z]+)', hyphen_preserve, cleaned)
+	# Any remaining hyphens become spaces
+	cleaned = re.sub(r'-', ' ', cleaned)
+
+	# Collapse multiple spaces
+	cleaned = re.sub(r'\s+', ' ', cleaned)
+	cleaned = cleaned.strip()
+
+	# Special case: if result is 'a book' (from '01a - book'), capitalize as 'A Book'
+	if cleaned.lower() == 'a book':
+		cleaned = 'A Book'
+
+	if not cleaned:
+		return name.strip()
+	try:
+		cleaned = sanitize_string(cleaned)
+	except Exception:
+		pass
+	try:
+		return title_case(cleaned)
+	except Exception:
+		return cleaned
+
+def clean_filename_text(name):
+	"""
+	Clean and format text for use in filenames.
+
+	This function processes text that will be used as part of filenames by:
+	- Removing leading numbers and separators
+	- Applying sanitization
+	- Converting to title case
+	- Ensuring filesystem-safe characters (removing/replacing problematic chars)
+	- Used for generating new filenames in operations like part-titles
+
+	Args:
+		name: The text to clean for filename use
+
+	Returns:
+		str: The cleaned filename-safe text
+	"""
+	if not name or not isinstance(name, str):
+		return name
+
+	# Split extension to preserve it
+	base, ext = os.path.splitext(name)
+	# Remove leading numbers and separators from base
+	cleaned = re.sub(r'^\s*(?:\(|)?\d{1,3}(?:\)|)?(?:\s|-|\.|:)+', '', base)
+	cleaned = cleaned.strip()
+	# If cleaning removed everything, fall back to original base
+	if not cleaned:
+		cleaned = base.strip()
+	if not cleaned:
+		return ''
+
+	# Remove all underscores
+	cleaned = cleaned.replace('_', ' ')
+
+	# Apply sanitization
+	try:
+		cleaned = sanitize_string(cleaned)
+	except Exception:
+		pass
+
+
+	# Apply title case
+	try:
+		cleaned = title_case(cleaned)
+	except Exception:
+		pass
+
+	# Always uppercase the first letter
+	if cleaned:
+		cleaned = cleaned[0].upper() + cleaned[1:]
+
+	# Additional filename safety - replace filesystem-problematic characters
+	try:
+		# Replace characters that are problematic in filenames
+		cleaned = re.sub(r'[<>:"/\\|?*]', '', cleaned)  # Remove invalid filename chars
+		cleaned = re.sub(r'\s+', ' ', cleaned)  # Normalize whitespace
+		cleaned = cleaned.strip()
+	except Exception:
+		pass
+
+	# Reattach extension (preserve original extension exactly)
+	return (cleaned + ext) if ext else cleaned
+
+def book_title_logic(name):
+	"""
+	Legacy function for basic title capitalization.
+
+	This function provides backward compatibility and performs basic capitalization
+	of text after removing leading numbers. Used primarily for author names and
+	simple title formatting.
+
+	Args:
+		name: The text to process
+
+	Returns:
+		str: The processed text with basic capitalization
+	"""
+	if name is None:
+		return None
 	try:
 		s = str(name).strip()
 	except Exception:
-		return name
+		return str(name)
 	s = re.sub(r'^\s*(?:\(|)?\d{1,3}(?:\)|)?(?:\s|-|\.|:)+', '', s)
 	s = re.sub(r'^[\-\._\s]+', '', s)
 	s = re.sub(r'\s{2,}', ' ', s)
@@ -65,24 +224,34 @@ def book_title_logic(name):
 				break
 		s = ' '.join(parts)
 	return s
-
 def clean_album_name(name):
-	if not name or not isinstance(name, str):
-		return name
-	cleaned = re.sub(r'^\s*(?:\(|)?\d{1,3}(?:\)|)?(?:\s|-|\.|:)+', '', name)
-	cleaned = cleaned.strip()
-	if not cleaned:
-		return name.strip()
-	try:
-		cleaned = sanitize_string(cleaned)
-	except Exception:
-		pass
-	try:
-		return cleaned.title()
-	except Exception:
-		return cleaned
+	"""
+	Legacy alias for clean_folder_name.
+
+	This function is kept for backward compatibility.
+	Use clean_folder_name for new code.
+
+	Args:
+		name: The folder/album name to clean
+
+	Returns:
+		str: The cleaned folder name
+	"""
+	return clean_folder_name(name)
 
 def sanitize_series_name(name):
+	"""
+	Legacy function for series name sanitization.
+
+	This function provides backward compatibility for series name processing.
+	It performs basic cleaning and title case formatting for series names.
+
+	Args:
+		name: The series name to sanitize
+
+	Returns:
+		str or None: The sanitized series name, or None if invalid
+	"""
 	if not name:
 		return None
 	try:
@@ -101,10 +270,49 @@ def sanitize_series_name(name):
 	except Exception:
 		pass
 	try:
-		s = s.title()
+		s = title_case(s)
 	except Exception:
 		pass
 	return s if s else None
+
+def title_case(text):
+	"""
+	Apply proper title case to text, capitalizing major words while keeping articles, prepositions, and conjunctions lowercase.
+	"""
+	if not text:
+		return text
+	try:
+		s = str(text).lower().strip()
+	except Exception:
+		return text
+	
+	# Common words to keep lowercase (unless first or last word)
+	lower_words = {
+		'a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'in', 'of', 'on', 'or', 
+		'the', 'to', 'with', 'from', 'into', 'onto', 'over', 'under', 'above', 'below',
+		'between', 'among', 'through', 'during', 'before', 'after', 'since', 'until',
+		'while', 'because', 'although', 'though', 'unless', 'if', 'when', 'where',
+		'why', 'how', 'what', 'which', 'who', 'whom', 'whose', 'that', 'this', 'these',
+		'those', 'i', 'me', 'my', 'myself', 'we', 'us', 'our', 'ourselves', 'you', 'your',
+		'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers',
+		'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'themselves'
+	}
+	
+	words = re.split(r'[\s.]+', s)
+	if not words:
+		return s
+	
+	result = []
+	for i, word in enumerate(words):
+		if i == 0 or i == len(words) - 1 or word.lower() not in lower_words:
+			if word:
+				result.append(word[0].upper() + word[1:])
+			else:
+				result.append(word)
+		else:
+			result.append(word.lower())
+	
+	return ' '.join(result)
 
 def natural_sort_key(filename):
 	parts = re.split(r'(\d+)', filename)
@@ -212,7 +420,8 @@ def parse_series_index_from_folder_name(folder_name):
 		r'\b(?:book|vol(?:ume)?|v)\b[\s\.:\-]*?(\d{1,3})\b',
 		r'#\s*(\d{1,3})\b',
 		r'\b(\d{1,3})\s*(?:of|/)\s*\d{1,3}\b',
-		r'\bpart\s*(\d{1,3})\b'
+		r'\bpart\s*(\d{1,3})\b',
+		r'\b(?:book|vol(?:ume)?|v|part|episode|disc|volume)\s*0*(\d{1,3})\b',
 	]
 	for p in patterns:
 		try:
@@ -221,7 +430,8 @@ def parse_series_index_from_folder_name(folder_name):
 			m = None
 		if m:
 			try:
-				return int(m.group(1))
+				# Remove leading zeros for numbers like '0002'
+				return int(m.group(1).lstrip('0') or '0')
 			except Exception:
 				continue
 	# Try roman numerals
@@ -230,8 +440,8 @@ def parse_series_index_from_folder_name(folder_name):
 		val = parse_roman(mroman.group(1))
 		if val:
 			return val
-	# Try written numbers
-	mwritten = re.search(r'(?:book|vol(?:ume)?|v|part|episode|disc|volume)?\s*([a-z\- ]+)', s, re.IGNORECASE)
+	# Try written numbers only if the string is exactly a written number (not part of a longer string)
+	mwritten = re.fullmatch(r'(?:book|vol(?:ume)?|v|part|episode|disc|volume)?\s*([a-z\- ]+)', s, re.IGNORECASE)
 	if mwritten:
 		text = mwritten.group(1).strip()
 		# First try roman numerals
@@ -242,17 +452,20 @@ def parse_series_index_from_folder_name(folder_name):
 		val = parse_written_number(text)
 		if val:
 			return val
-	# Fallback: any digit
+	# Fallback: any digit (including leading zeros, but not decimals)
 	try:
-		m = re.search(r'\b(\d{1,3})\b', s)
+		m = re.search(r'\b(\d{1,3})(?![\d\.])\b', s)
 	except Exception:
 		m = None
 	if m:
 		try:
-			return int(m.group(1))
+			return int(m.group(1).lstrip('0') or '0')
 		except Exception:
 			return None
 	return None
+
+# Alias for backward compatibility and easier import
+parse_series_index_from_folder = parse_series_index_from_folder_name
 
 
 def discover_audiobook_folders(root_path, max_depth=5):
@@ -334,9 +547,6 @@ def detect_folder_type(folder_path):
 	for ext in audio_extensions:
 		direct_audio.extend(glob.glob(os.path.join(folder_path, ext)))
 
-	if not direct_audio:
-		return 'unknown'  # No audio files found
-
 	# Check if there are subfolders with audio files (indicating series structure)
 	try:
 		subdirs = [d for d in os.listdir(folder_path)
@@ -356,5 +566,12 @@ def detect_folder_type(folder_path):
 
 	if has_audio_subfolders:
 		return 'series'  # Parent folder with child folders containing audio
-	else:
+	elif direct_audio:
 		return 'novel'   # Single folder with audio files directly
+	else:
+		# Recursively check subfolders for audio files
+		for subdir in subdirs:
+			subdir_path = os.path.join(folder_path, subdir)
+			if detect_folder_type(subdir_path) in ('novel', 'series'):
+				return 'series'
+		return 'unknown'  # No audio files found

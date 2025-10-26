@@ -78,7 +78,8 @@ def cmd_mutate_convert(args):
         author_name=getattr(args, 'author_name', None),
         narrator_name=getattr(args, 'narrator_name', None),
         author_fix=getattr(args, 'author_fix', False),
-        in_place=True
+        in_place=True,
+        root_path=getattr(args, 'root_path', None)
     )
     # Use mutated['folder'] for conversion
     return convert_folder_to_m4b(
@@ -89,13 +90,14 @@ def cmd_mutate_convert(args):
         series_name=getattr(args, 'series_name', None),
         author_fix=getattr(args, 'author_fix', False),
         cli_author=getattr(args, 'author_name', None),
-        album_names=False
+        album_names=False,
+        root_path=getattr(args, 'root_path', None)
     )
 
 
 # --- Re-export and stub legacy functions for test compatibility ---
 from .utils import (
-    sanitize_string, book_title_logic, clean_album_name, sanitize_series_name,
+    sanitize_string, book_title_logic, clean_folder_name, clean_filename_text,
     natural_sort_key, track_number_sort_key, parse_series_index_from_folder_name
 )
 from audiobook_p.metadata_normalization import reformat_tag_for_file_type
@@ -105,12 +107,12 @@ from audiobook_p.mutation import (
 )
 
 # Patch: legacy-compatible mutate_metadata for tests
-def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=False, author_name=None, narrator_name=None, author_fix=False, in_place=False, apply_metadata_to_file=None):
+def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=False, author_name=None, narrator_name=None, author_fix=False, in_place=False, apply_metadata_to_file=None, root_path=None):
     from audiobook_p.mutation import mutate_metadata as _mutate_metadata
     # Apply author_fix logic to author_name before passing to mutation
     if author_fix and author_name:
         author_name = _author_last_first_to_first_last(author_name)
-    result = _mutate_metadata(metadata_dict, album_sort_prefix, album_suffix, sort_by, chapter_titles, series_name, part_titles, author_name, narrator_name, author_fix, in_place, apply_metadata_to_file=apply_metadata_to_file)
+    result = _mutate_metadata(metadata_dict, album_sort_prefix, album_suffix, sort_by, chapter_titles, series_name, part_titles, author_name, narrator_name, author_fix, in_place, apply_metadata_to_file=apply_metadata_to_file, root_path=root_path)
     # Always return the full dict for test compatibility
     return result
 from audiobook_p.metadata_extraction import (
@@ -226,8 +228,12 @@ def sanitize_metadata_value(value):
     # Return as-is for other types
     return value
 
+
 # Export cli symbol for compatibility with tests and __init__.py
 from .cli import main as cli
+
+# Export clean_album_name for test compatibility
+from .utils import clean_album_name
 
 """Audiobook P - Main CLI entrypoint for audiobook processing"""
 

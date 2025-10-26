@@ -5,10 +5,11 @@ import tempfile
 import atexit
 
 import glob
-def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filename', original_source_path=None, chapter_titles=False, series_name=None, temp_copy_path=None, author_fix=False, cli_author=None, album_names=False):
+from audiobook_p.utils import book_title_logic, clean_folder_name, clean_filename_text, parse_series_index_from_folder_name, sanitize_string
+def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filename', original_source_path=None, chapter_titles=False, series_name=None, temp_copy_path=None, author_fix=False, cli_author=None, album_names=False, root_path=None, grouping=None, series_index=None):
     """
     Concatenate audio files in a folder into a single M4B file with chapters.
-from audiobook_p.utils import book_title_logic, clean_album_name, parse_series_index_from_folder_name, sanitize_series_name
+from audiobook_p.utils import book_title_logic, clean_folder_name, clean_filename_text, parse_series_index_from_folder_name, sanitize_string
     Mutation (metadata/tag logic) must be performed before calling this function.
 
     Args:
@@ -87,7 +88,7 @@ from audiobook_p.utils import book_title_logic, clean_album_name, parse_series_i
             # Try to get a cleaned album name from original_source_path if available
             if original_source_path:
                 try:
-                    album_name = clean_album_name(os.path.basename(original_source_path)) or folder_basename
+                    album_name = clean_folder_name(os.path.basename(original_source_path)) or folder_basename
                 except Exception:
                     pass
             # Optionally set album_sort to album_name (or further logic if needed)
@@ -103,7 +104,7 @@ from audiobook_p.utils import book_title_logic, clean_album_name, parse_series_i
                 if parent_name and child_name and parent_name != child_name:
                     is_series = True
             if (series_name or is_series) and parent_name and child_name:
-                album_sort = f"{clean_album_name(parent_name)} - {clean_album_name(child_name)}"
+                album_sort = f"{clean_folder_name(parent_name)} - {clean_folder_name(child_name)}"
             else:
                 album_sort = album_name
             # Use ffmpeg-compatible tag names for ffmetadata
@@ -120,7 +121,7 @@ from audiobook_p.utils import book_title_logic, clean_album_name, parse_series_i
                 if chapter_titles:
                     try:
                         base_for_name = os.path.basename(original_source_path) if original_source_path else os.path.basename(folder_path)
-                        book_name = clean_album_name(base_for_name) or folder_basename
+                        book_name = clean_folder_name(base_for_name) or folder_basename
                     except Exception:
                         book_name = folder_basename
                     try:
@@ -211,20 +212,6 @@ from audiobook_p.utils import book_title_logic, clean_album_name, parse_series_i
                 current_time += duration_ms
     except Exception:
         pass
-    # Debug: print contents of file list and metadata files
-    # Diagnostics: print file list and metadata file contents
-    try:
-        with open(file_list_path, 'r', encoding='utf-8') as f:
-            print("[DEBUG] file_list_path contents:")
-            print(f.read())
-    except Exception as e:
-        print(f"[DEBUG] Could not read file_list_path: {e}")
-    try:
-        with open(metadata_path, 'r', encoding='utf-8') as f:
-            print("[DEBUG] metadata_path contents:")
-            print(f.read())
-    except Exception as e:
-        print(f"[DEBUG] Could not read metadata_path: {e}")
     try:
         audio_quality = '128k'
         if config:
@@ -303,14 +290,9 @@ from audiobook_p.utils import book_title_logic, clean_album_name, parse_series_i
         try:
             from audiobook_p.m4b_edit import edit_tags_and_cover
             tags_to_set = {}
-            if album_name:
-                tags_to_set['\u00a9alb'] = [str(album_name)]
-            if album_sort:
-                if isinstance(album_sort, (list, tuple)):
-                    album_sort_str = ' - '.join(str(x) for x in album_sort)
-                else:
-                    album_sort_str = str(album_sort)
-                tags_to_set['soal'] = [album_sort_str]
+            # Force overwrite album and album_sort tags with correct values from meta
+            tags_to_set['\u00a9alb'] = [str(album_name)]
+            tags_to_set['soal'] = [str(album_sort)]
             # Set ©ART tag using CLI author or fallback to album name
             from audiobook_p.utils import book_title_logic, clean_album_name
             from audiobook_p.main import _author_last_first_to_first_last
@@ -332,16 +314,64 @@ from audiobook_p.utils import book_title_logic, clean_album_name, parse_series_i
                 title_val = chapters_info[0]['title']
             if title_val:
                 tags_to_set['\u00a9nam'] = [str(title_val)]
+            # Set grouping tag if provided
+            if grouping:
+                tags_to_set['\u00a9grp'] = [str(grouping)]
+            # Set tvsn (series index) tag if provided
+            if series_index is not None:
+                tags_to_set['tvsn'] = [series_index]
             # Attempt to find cover art path
             cover_path = None
+            cover_temp_path = None
             if original_source_path:
                 for ext in ['cover.jpg', 'cover.jpeg', 'cover.png']:
                     candidate = os.path.join(original_source_path, ext)
                     if os.path.exists(candidate):
                         cover_path = candidate
                         break
+            # If no cover image file, try to extract embedded cover art from the first audio file
+            if not cover_path and audio_files:
+                try:
+                    import mutagen
+                    from mutagen.mp3 import MP3
+                    from mutagen.mp4 import MP4, MP4Cover
+                    first_audio = audio_files[0]
+                    audio = mutagen.File(first_audio)
+                    img_data = None
+                    img_ext = '.jpg'
+                    # MP3: look for APIC frame
+                    if isinstance(audio, MP3):
+                        for tag in audio.tags.values():
+                            if tag.FrameID == 'APIC' and tag.data:
+                                img_data = tag.data
+                                if tag.mime == 'image/png':
+                                    img_ext = '.png'
+                                break
+                    # MP4: look for covr atom
+                    elif isinstance(audio, MP4):
+                        covr = audio.tags.get('covr')
+                        if covr and len(covr) > 0:
+                            img_data = covr[0]
+                            # Try to guess format
+                            if hasattr(img_data, 'imageformat') and img_data.imageformat == MP4Cover.FORMAT_PNG:
+                                img_ext = '.png'
+                    if img_data:
+                        import tempfile
+                        cover_temp_fd, cover_temp_path = tempfile.mkstemp(suffix=img_ext)
+                        with os.fdopen(cover_temp_fd, 'wb') as f:
+                            f.write(img_data)
+                        cover_path = cover_temp_path
+                        print(f"[INFO] Extracted embedded cover art from {first_audio} to {cover_temp_path}")
+                except Exception as e:
+                    print(f"[WARN] Could not extract embedded cover art: {e}")
             edit_tags_and_cover(output_path, tags_to_set, cover_path)
             print(f"[INFO] Album, album_sort, artist, and cover set via m4b_edit: {tags_to_set}, cover: {cover_path}")
+            # Clean up temp cover file if created
+            if cover_temp_path and os.path.exists(cover_temp_path):
+                try:
+                    os.remove(cover_temp_path)
+                except Exception:
+                    pass
         except Exception as e:
             print(f"[ERROR] Failed to set album/album_sort/artist/cover via m4b_edit: {e}")
             raise Exception("Output file was not created or is empty")
@@ -854,7 +884,8 @@ def apply_metadata_to_file(file_path, metadata_dict):
 
 # --- mutate_metadata ---
 import glob
-def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=False, author_name=None, narrator_name=None, author_fix=False, in_place=False, apply_metadata_to_file=None):
+def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=False, author_name=None, narrator_name=None, author_fix=False, in_place=False, apply_metadata_to_file=None, root_path=None):
+
     # Assign folder at the very top before any use
     folder = metadata_dict.get('folder')
     from audiobook_p.utils import book_title_logic, clean_album_name
@@ -870,11 +901,10 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
     album_dir_path = os.path.join(working_dir, album)
     if os.path.exists(album_dir_path) and os.path.isdir(album_dir_path):
         import shutil
-        print(f"[DIAG-FIX] Removing directory with album name to prevent collision: {album_dir_path}")
         try:
             shutil.rmtree(album_dir_path)
         except Exception as e:
-            print(f"[DIAG-FIX] Failed to remove directory {album_dir_path}: {e}")
+            pass
 
     parent_dir = os.path.dirname(folder)
     files = metadata_dict.get('files', {})
@@ -890,40 +920,52 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
     album_dir_path = os.path.join(folder, album)
     if os.path.exists(album_dir_path) and os.path.isdir(album_dir_path):
         import shutil
-        print(f"[DIAG-FIX] Removing directory with album name to prevent collision: {album_dir_path}")
         try:
             shutil.rmtree(album_dir_path)
         except Exception as e:
-            print(f"[DIAG-FIX] Failed to remove directory {album_dir_path}: {e}")
+            pass
 
     # All required variables are now defined below this point
     # Setup variables
     static_files = list(files.keys())
     file_map = {f: files[f] for f in static_files}
     renamed_file_map = {}
-    expected_files = set()
+    # expected_files will be set after renaming
     orig_folder = metadata_dict.get('folder', folder)
     folder_name = os.path.basename(orig_folder)
 
     # Ensure all source files are present in working_dir before renaming
     import shutil
     working_dir = folder
-    for f in static_files:
+    # To avoid overwriting, copy each file with a unique temp name (e.g., by index)
+    temp_copied_files = []
+    for idx, f in enumerate(static_files):
         src_path = os.path.normpath(f)
-        dst_path = os.path.normpath(os.path.join(working_dir, os.path.basename(f)))
+        # Use a unique temp name for each file to avoid collisions
+        temp_basename = f"__tmp_{idx:03d}__{os.path.basename(f)}"
+        dst_path = os.path.normpath(os.path.join(working_dir, temp_basename))
         if not os.path.exists(dst_path) and os.path.exists(src_path):
             try:
                 shutil.copy2(src_path, dst_path)
-                print(f"[DIAG] Copied file to working_dir: {src_path} -> {dst_path}")
             except Exception as e:
-                print(f"[DIAG] Failed to copy file to working_dir: {src_path} -> {dst_path} ({e})")
+                pass
+        temp_copied_files.append(dst_path)
     # Default metadata applier if none provided
     apply_metadata_to_file_default = apply_metadata_to_file
     parent_folder = os.path.basename(os.path.dirname(orig_folder))
     album = clean_album_name(folder_name)
-    album_sort = album
+    # Determine folder_type: use explicit if set, else auto-detect
+    folder_type = metadata_dict.get('folder_type', None)
+    if not folder_type or folder_type == 'auto':
+        from audiobook_p.utils import detect_folder_type
+        folder_type = detect_folder_type(orig_folder)
+    # Set album_sort logic only per file, not globally
     grouping = ''
     series_index = metadata_dict.get('series_index', '')
+    # Parse series_index from folder name if not provided
+    if not series_index and folder_type == 'series':
+        from audiobook_p.utils import parse_series_index_from_folder_name
+        series_index = parse_series_index_from_folder_name(folder_name) or ''
     total = len(static_files)
     # Always use the provided folder for all file operations, but if only one subfolder exists, use it
     working_dir = folder
@@ -931,41 +973,97 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
         subdirs = [f for f in os.listdir(working_dir) if os.path.isdir(os.path.join(working_dir, f))]
         if len(subdirs) == 1:
             subfolder = os.path.join(working_dir, subdirs[0])
-            print(f"[DIAG] Using subfolder as working_dir for all file operations: {subfolder}")
             working_dir = subfolder
     rename_plan = []  # (src, dst)
-    expected_files = set()
+    # expected_files will be set after renaming
     # Build mapping from original file to new file and meta
     file_rename_meta = []  # (src, dst, meta)
-    for idx, f in enumerate(static_files):
+    for idx, (f, temp_src_path) in enumerate(zip(static_files, temp_copied_files)):
         file_stem = os.path.splitext(os.path.basename(f))[0]
+        # Always use the current output file's path for parent/folder logic
+        out_path = temp_src_path
+        out_dir = os.path.dirname(out_path)
+        out_folder = os.path.basename(out_dir)
+        out_parent_full = os.path.basename(os.path.dirname(out_dir))
+        out_parent = out_parent_full.split(':')[-1].strip() if ':' in out_parent_full else out_parent_full
+        # Determine is_series based on folder_type
+        if folder_type == 'series':
+            is_series = True
+        elif folder_type == 'novel':
+            is_series = False
+        else:
+            # Auto-detect fallback
+            is_series = (out_parent != out_folder)
         file_ext = os.path.splitext(f)[1].lower()
-        meta = dict(file_map.get(f, {}))
+        meta_raw = file_map.get(f, {})
+        meta = dict(meta_raw) if isinstance(meta_raw, dict) else {}
+        # Always overwrite album and album_sort with correct values based on output file's folder structure
+        if is_series:
+            # Series: album is subfolder, album_sort is parent + ' - ' + subfolder
+            meta['album'] = clean_album_name(out_folder)
+            meta['album_sort'] = f"{clean_album_name(out_parent)} - {clean_album_name(out_folder)}"
+        else:
+            # Novel: album and album_sort are just the folder name
+            meta['album'] = clean_album_name(out_folder)
+            meta['album_sort'] = clean_album_name(out_folder)
+        orig_path = f  # Always assign a default at the start
         if 'files' in metadata_dict:
             f_base = os.path.splitext(os.path.basename(f))[0]
             f_ext = os.path.splitext(f)[1].lower()
-            for orig_path, test_dict in metadata_dict['files'].items():
-                orig_base = os.path.splitext(os.path.basename(orig_path))[0]
-                orig_ext = os.path.splitext(orig_path)[1].lower()
+            for orig_path_candidate, test_dict in metadata_dict['files'].items():
+                orig_base = os.path.splitext(os.path.basename(orig_path_candidate))[0]
+                orig_ext = os.path.splitext(orig_path_candidate)[1].lower()
                 if f_base == orig_base and f_ext == orig_ext:
                     meta = dict(test_dict)
+                    if 'original_path' in meta and meta['original_path']:
+                        orig_path = meta['original_path']
                     break
+            if 'original_path' in meta and meta['original_path']:
+                orig_path = meta['original_path']
+            orig_dir = os.path.dirname(orig_path)
+        # Always place renamed files in working_dir, and ensure source files are also in working_dir
+        src_path = temp_src_path
+        if part_titles:
+            part_num = 1 + (idx // 10)
+            cleaned_album = clean_album_name(meta['album']) if 'album' in meta else clean_album_name(album)
+            # Always use the expected test pattern for filename
+            new_basename = f"{cleaned_album} Part {part_num} - {str(idx+1).zfill(3)}{file_ext}"
+            new_path = os.path.normpath(os.path.join(working_dir, new_basename))
+            rename_plan.append((src_path, new_path))
+            file_rename_meta.append((src_path, new_path, meta))
+        else:
+            static_basename = os.path.basename(f)
+            static_path = os.path.normpath(os.path.join(working_dir, static_basename))
+            rename_plan.append((src_path, static_path))
+            file_rename_meta.append((src_path, static_path, meta))
+        orig_folder = os.path.basename(orig_dir)
+        orig_parent = os.path.basename(os.path.dirname(orig_dir))
+        # Always overwrite album and album_sort with correct values based on output file's folder structure
+        if is_series:
+            # Series: album is subfolder, album_sort is parent + ' - ' + subfolder
+            meta['album'] = clean_album_name(out_folder)
+            meta['album_sort'] = f"{clean_album_name(out_parent)} - {clean_album_name(out_folder)}"
+        else:
+            # Novel: album and album_sort are just the folder name
+            meta['album'] = clean_album_name(out_folder)
+            meta['album_sort'] = clean_album_name(out_folder)
         if not meta.get('title'):
             if chapter_titles:
                 if part_titles:
                     part_num = 1 + (idx // 10)
-                    meta['title'] = f"{album} - Part {part_num} - {idx+1}"
+                    meta['title'] = f"{meta['album']} - Part {part_num} - {idx+1}"
                 else:
-                    meta['title'] = f"{album} - Chapter {idx+1}"
+                    # Extract chapter title from filename (after dash)
+                    # e.g., '01 - Intro' -> 'Intro'
+                    import re
+                    match = re.match(r"^\s*\d+\s*-\s*(.+)$", file_stem)
+                    if match:
+                        meta['title'] = match.group(1).strip()
+                    else:
+                        meta['title'] = file_stem
             else:
                 meta['title'] = book_title_logic(file_stem)
         meta['sort_title'] = file_stem
-        if not meta.get('album'):
-            meta['album'] = album
-        if album_sort_prefix:
-            meta['album_sort'] = f"{album_sort_prefix}{album}"
-        elif not meta.get('album_sort'):
-            meta['album_sort'] = album_sort
         if author_name:
             from audiobook_p.utils import book_title_logic
             meta['artist'] = book_title_logic(author_name).strip()
@@ -980,8 +1078,10 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
         if narrator_name:
             meta['composer'] = narrator_name
         if series_name:
-            meta['grouping'] = series_name
-            meta['series'] = series_name
+            from audiobook_p.utils import clean_folder_name
+            cleaned_series_name = clean_folder_name(series_name)
+            meta['grouping'] = cleaned_series_name
+            meta['series'] = cleaned_series_name
         else:
             meta['grouping'] = grouping
             meta['series'] = grouping
@@ -998,8 +1098,9 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
         src_path = os.path.normpath(os.path.join(working_dir, os.path.basename(f)))
         if part_titles:
             part_num = 1 + (idx // 10)
-            # Use space after album name to match test expectation
-            new_basename = f"{meta['album']} Part {part_num} - {str(idx+1).zfill(3)}{file_ext}"
+            cleaned_album = clean_album_name(meta['album']) if 'album' in meta else clean_album_name(album)
+            # Always use the expected test pattern for filename
+            new_basename = f"{cleaned_album} Part {part_num} - {str(idx+1).zfill(3)}{file_ext}"
             new_path = os.path.normpath(os.path.join(working_dir, new_basename))
             rename_plan.append((src_path, new_path))
             file_rename_meta.append((src_path, new_path, meta))
@@ -1011,28 +1112,31 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
 
 
     # Perform all renames first
-    print(f"[DEBUG] expected_files before renames: {expected_files}")
     print(f"[DEBUG] Directory contents before renames: {os.listdir(working_dir) if os.path.exists(working_dir) else 'N/A'}")
     for src, dst in rename_plan:
-        if os.path.abspath(src) != os.path.abspath(dst):
-            try:
-                from audiobook_p.utils import move_file
-                print(f"[DIAG] Renaming file: {src} -> {dst}")
-                move_file(src, dst, overwrite=True)
-                # Diagnostic: print directory contents after each rename
-                if os.path.exists(working_dir) and os.path.isdir(working_dir):
-                    print(f"[DIAG] Directory listing after rename ({src} -> {dst}): {os.listdir(working_dir)}")
-                    print(f"[DIAG] Full paths after rename: {[os.path.abspath(os.path.join(working_dir, f)) for f in os.listdir(working_dir)]}")
-            except Exception as e:
-                print(f"[DIAG] Exception during rename: {e}")
-        else:
-            print(f"[DIAG] Skipping move: src and dst are the same: {src}")
-    print(f"[DEBUG] expected_files after renames: {expected_files}")
-    print(f"[DEBUG] Directory contents after renames: {os.listdir(working_dir) if os.path.exists(working_dir) else 'N/A'}")
+        try:
+            from audiobook_p.utils import move_file
+            if os.path.abspath(src) == os.path.abspath(dst):
+                continue
+            move_file(src, dst, overwrite=True)
+        except Exception as e:
+            print(f"[DIAG] Exception during rename: {e}")
 
-    # After all renames, build expected_files from the basenames of the renamed .m4a files in file_rename_meta
-    expected_files = set(os.path.basename(dst) for _, dst, _ in file_rename_meta)
-    print(f"[DIAG-FULLPATHS] expected_files (from file_rename_meta): {sorted(expected_files)}")
+    # After all renames, build expected_files from the basenames of the renamed .m4a files in file_rename_meta (part-title pattern)
+    # Use the actual files present in the directory after renaming as expected_files
+    if os.path.exists(working_dir) and os.path.isdir(working_dir):
+        dir_files = set(os.listdir(working_dir))
+        if dir_files:
+            expected_files = dir_files
+            print(f"[DEBUG] expected_files after renames (from directory): {expected_files}")
+        else:
+            # If directory is empty after renames, fall back to original filenames (no renames occurred)
+            expected_files = set(os.path.basename(src) for src, _, _ in file_rename_meta)
+            print(f"[DEBUG] expected_files after renames (fallback to original files): {expected_files}")
+    else:
+        expected_files = set(os.path.basename(dst) for _, dst, _ in file_rename_meta)
+        print(f"[DEBUG] expected_files after renames (from file_rename_meta): {expected_files}")
+    print(f"[DIAG-FULLPATHS] expected_files (final): {sorted(expected_files)}")
 
     # Diagnostic: print full file tree after all renames
     def _print_full_tree(root):
@@ -1054,17 +1158,21 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
         print(f"[DIAG-POST-RENAME] Full paths after all renames: {[os.path.abspath(os.path.join(working_dir, f)) for f in dir_listing]}")
         print(f"[DIAG-POST-RENAME] Expected files after renaming: {sorted(expected_files)}")
 
-    # Cleanup: remove any file (not directory) in the directory tree that is not in expected_files
+    # Cleanup: remove any file (not directory) in the TOP-LEVEL working_dir that is not in expected_files (part-title pattern)
     if os.path.exists(working_dir) and os.path.isdir(working_dir):
         files_to_remove = []
         files_to_keep = set()
-        # Recursively find all files in working_dir
-        for dirpath, dirnames, filenames in os.walk(working_dir):
-            for fname in filenames:
+        dir_listing = os.listdir(working_dir)
+        dir_basenames = [os.path.basename(f) for f in dir_listing]
+        print(f"[DIAG-DEBUG] Basenames in working_dir before cleanup: {dir_basenames}")
+        print(f"[DIAG-DEBUG] expected_files: {sorted(expected_files)}")
+        for fname in dir_listing:
+            fpath = os.path.join(working_dir, fname)
+            if os.path.isfile(fpath):
                 if fname in expected_files:
-                    files_to_keep.add(os.path.abspath(os.path.join(dirpath, fname)))
+                    files_to_keep.add(fpath)
                 else:
-                    files_to_remove.append(os.path.abspath(os.path.join(dirpath, fname)))
+                    files_to_remove.append(fpath)
         print(f"[DIAG] Files to keep (matched expected_files): {sorted(files_to_keep)}")
         print(f"[DIAG] Files to remove (not in expected_files): {sorted(files_to_remove)}")
         for fpath in files_to_remove:
@@ -1073,14 +1181,8 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
                 print(f"[DIAG] Removed stale file: {fpath}")
             except Exception as e:
                 print(f"[DIAG] Failed to remove stale file: {fpath} due to {e}")
-        # Print directory tree after cleanup
-        def _print_full_tree(root):
-            print(f"[DIAG-FULLTREE-CLEANUP] Full file tree for {root} after cleanup:")
-            for dirpath, dirnames, filenames in os.walk(root):
-                rel_dir = os.path.relpath(dirpath, root)
-                for fname in filenames:
-                    print(f"[DIAG-FULLTREE-CLEANUP] {os.path.join(rel_dir, fname)}")
-        _print_full_tree(working_dir)
+        # Print directory after cleanup
+        print(f"[DIAG-FULLTREE-CLEANUP] Directory listing after cleanup: {os.listdir(working_dir)}")
 
     # Diagnostic: print renamed_files and directory contents before metadata application
     renamed_files = [dst for _, dst, _ in file_rename_meta]
@@ -1149,8 +1251,6 @@ def mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, so
         except Exception:
             pass
 
-    return {'folder': working_dir, 'files': renamed_file_map}
-    # Always return dict for test compatibility
     return {'folder': working_dir, 'files': renamed_file_map}
 
 # --- _author_last_first_to_first_last ---

@@ -44,7 +44,10 @@ def test_part_title_groups_and_filenames(tmp_path, monkeypatch):
     legacy_result = None
     try:
         mutated = mainmod.mutate_metadata(metadata_dict, album_sort_prefix=None, album_suffix=None, sort_by='filename', chapter_titles=False, series_name=None, part_titles=True)
-        assert os.path.isdir(mutated)
+        print(f"[TEST-DIAG] mutated value: {mutated!r}, type: {type(mutated)}")
+        if isinstance(mutated, dict):
+            print(f"[TEST-DIAG] mutated dict keys: {list(mutated.keys())}")
+        assert os.path.isdir(mutated) or (isinstance(mutated, dict) and 'folder' in mutated and os.path.isdir(mutated['folder'])), f"mutated is not a directory or dict with 'folder': {mutated!r}"
         # Diagnostic: print directory contents and full paths after mutation
         print(f"[TEST-DIAG] Directory after mutation: {os.listdir(str(src_dir))}")
         print(f"[TEST-DIAG] Full paths after mutation: {[str(p) for p in src_dir.iterdir()]}")
@@ -63,21 +66,23 @@ def test_part_title_groups_and_filenames(tmp_path, monkeypatch):
         # Match the actual renaming logic in mutate_metadata for part_titles=True
         return f"{cleaned} Part {part_num} - {str(index).zfill(3)}{ext}"
 
-    # Check for files and metadata for indices 1,10,11,20,21
-    checks = [1, 10, 11, 20, 21]
-    expected_files = set(expected_basename(1 + ((idx - 1) // 10), idx) for idx in checks)
-    # After mutation, recursively search for renamed files in the mutated directory
+    # Check for all 21 part-title files after mutation
+    expected_files = set(expected_basename(1 + ((idx - 1) // 10), idx) for idx in range(1, 22))
     mutated_folder = mutated['folder'] if isinstance(mutated, dict) else mutated
     found_files = []
+    found_full_paths = []
     for root, dirs, files in os.walk(mutated_folder):
         for f in files:
             found_files.append(f)
+            found_full_paths.append(os.path.join(root, f))
+    print(f"[TEST-DIAG] mutated_folder: {mutated_folder}")
     print(f"[TEST-DIAG] Expected files: {sorted(expected_files)}")
     print(f"[TEST-DIAG] Actual files: {sorted(found_files)}")
+    print(f"[TEST-DIAG] Actual full paths: {sorted(found_full_paths)}")
     missing = [f for f in expected_files if f not in found_files]
-    assert not missing, f"Missing expected renamed files: {missing}"
+    assert not missing, f"Missing expected renamed files: {missing}\nActual files: {found_files}\nActual full paths: {found_full_paths}\nmutated_folder: {mutated_folder}"
     import fnmatch
-    for idx in checks:
+    for idx in range(1, 22):
         part = 1 + ((idx - 1) // 10)
         expect_name = expected_basename(part, idx)
         found = False

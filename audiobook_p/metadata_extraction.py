@@ -55,8 +55,8 @@ def extract_metadata_from_file(file_path):
         extracted['sort_title'] = file_stem
     # album: cleaned folder name
     if not extracted.get('album'):
-        from audiobook_p.utils import clean_album_name
-        extracted['album'] = clean_album_name(folder_name)
+        from audiobook_p.utils import clean_folder_name
+        extracted['album'] = clean_folder_name(folder_name)
     # album_sort: same as album by default
     if not extracted.get('album_sort'):
         extracted['album_sort'] = extracted['album']
@@ -144,10 +144,10 @@ def extract_metadata_from_folder(folder_path, folder_type, sort_by='filename'):
     import glob
     if not os.path.isdir(folder_path):
         raise ValueError(f"Path is not a directory: {folder_path}")
-    audio_extensions = ['*.m4a', '*.mp3']
+    audio_extensions = ['*.m4a', '*.mp3', '*.m4b']
     audio_files = []
     for ext in audio_extensions:
-        audio_files.extend(list(glob.glob(os.path.join(folder_path, ext))))
+        audio_files.extend(list(glob.glob(os.path.join(folder_path, '**', ext), recursive=True)))
     if not audio_files:
         raise ValueError(f"No audio files found in: {folder_path}")
     def natural_sort_key(filename):

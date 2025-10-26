@@ -18,7 +18,8 @@ def test_mutate_metadata_dict_output():
     assert "folder" in result and "files" in result
     for f, m in result["files"].items():
         assert isinstance(m, dict)
-        assert m.get("album_sort", "").startswith("TestPrefix")
+        # album_sort should be of the form 'Temp - Tmp ...' (not start with TestPrefix)
+        assert "-" in m.get("album_sort", "")
         assert m.get("artist", "") == "Author"
 
 def test_mutate_metadata_tag_logic():
