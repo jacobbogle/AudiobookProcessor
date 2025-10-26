@@ -2355,18 +2355,18 @@ def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filena
             str(output_path)
         ]
 
+        # Debug logging for ffmpeg command and file paths
+        logger.info("FFmpeg command: %s", ' '.join([str(x) for x in cmd]))
+        logger.info("FFmpeg input file list: %s", file_list_path)
+        logger.info("FFmpeg metadata file: %s", metadata_path)
+        logger.info("FFmpeg output file: %s", output_path)
+
         # Handle sleep prevention for different platforms
         import platform
         system = platform.system().lower()
         if system == 'windows':
-            try:
-                result = subprocess.run(['where', 'powershell'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    ffmpeg_args = ' '.join([f'"{arg}"' if ' ' in arg or '"' in arg else arg for arg in cmd])
-                    powershell_script = f'''$code = @"using System;using System.Runtime.InteropServices;public class Power {{[DllImport(\"kernel32.dll\")]public static extern uint SetThreadExecutionState(uint esFlags);public const uint ES_CONTINUOUS = 0x80000000;public const uint ES_SYSTEM_REQUIRED = 0x00000001;public const uint ES_DISPLAY_REQUIRED = 0x00000002;}}"@;Add-Type -TypeDefinition $code;[Power]::SetThreadExecutionState([Power]::ES_CONTINUOUS -bor [Power]::ES_SYSTEM_REQUIRED -bor [Power]::ES_DISPLAY_REQUIRED);try {{ & ffmpeg.exe {ffmpeg_args} }} finally {{ [Power]::SetThreadExecutionState([Power]::ES_CONTINUOUS); }}'''
-                    cmd = ['powershell', '-ExecutionPolicy', 'Bypass', '-Command', powershell_script]
-            except Exception:
-                logger.debug("Error checking for PowerShell, continuing without special sleep prevention")
+            # Disable PowerShell for now due to parsing issues
+            pass
         else:
             sleep_prevention_cmd = get_sleep_prevention_command()
             if sleep_prevention_cmd:
@@ -2394,9 +2394,12 @@ def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filena
         except Exception:
             total_secs = 1.0
 
+        stderr_lines = []  # Collect all stderr lines for error reporting
+
         if proc.stderr is not None:
             for raw_line in proc.stderr:
                 line = raw_line.strip()
+                stderr_lines.append(line)  # Collect the line
                 m = time_re.search(line)
                 if m and progress:
                     hh = int(m.group(1)); mm = int(m.group(2)); ss = float(m.group(3))
@@ -2408,8 +2411,13 @@ def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filena
         if retcode != 0:
             try:
                 out = proc.communicate(timeout=2)
-            except Exception:
-                pass
+                stdout, stderr = out
+                logger.error("FFmpeg stdout: %s", stdout)
+                logger.error("FFmpeg stderr: %s", '\n'.join(stderr_lines))
+                if stderr:
+                    logger.error("Additional FFmpeg stderr: %s", stderr)
+            except Exception as e:
+                logger.error("Failed to capture ffmpeg output: %s", e)
             raise Exception("ffmpeg failed with exit code {}".format(retcode))
 
         if progress:
@@ -2419,6 +2427,8 @@ def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filena
 
         # Verify output exists
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            logger.error("Output file not created or empty: %s", output_path)
+            # Don't clean up temp files on failure for debugging
             raise Exception("Output file was not created or is empty")
 
         # Try to add chapters with mutagen
@@ -2475,9 +2485,7 @@ def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filena
         # Add audiobook metadata to the output file (copy tags, cover art, series)
         add_audiobook_metadata(str(output_path), audio_files, original_audio_files, series_name=series_name, chapters_info=chapters_info, chapter_titles=chapter_titles, author_fix=author_fix, cli_author=cli_author, album_names=album_names)
 
-        return str(output_path)
-    finally:
-        # Clean up temporary files
+        # Clean up temporary files on success
         try:
             if os.path.exists(file_list_path):
                 os.remove(file_list_path)
@@ -2489,6 +2497,8 @@ def convert_folder_to_m4b(folder_path, output_path, config=None, sort_by='filena
         except Exception as e:
             logger.debug("Failed to remove metadata_path %s: %s", metadata_path, e)
 
+        return str(output_path)
+    finally:
         # Remove explicit temp_copy_path when safe
         try:
             if temp_copy_path:
